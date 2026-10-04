@@ -1,139 +1,112 @@
 import { ajaxRequest } from "./fetch";
 import { safeReplaceHtml } from "./helpers";
+import { ResponseType } from "./response";
 
-/**
- * Navigates to the specified URL by fetching the content as JSON and
- * updating the router target element with the HTML content.
- * 
- * If the response does not contain HTML, an error is thrown.
- * 
- * When the content is updated, the browser's history state and the
- * `current` route are updated, and the `loadEnd` event is fired.
- * Finally, the loading state is set to false.
- * 
- * @param {string} url - The URL to navigate to.
- * @param {boolean} pushState - Whether to update the browser's history state.
- * @returns {void}
- */
 export function navigateTo(url, pushState = true) {
-    // Fetch the page content as JSON
-    ajaxRequest(url)
-        .then(response => {
-            // If the response is invalid then do nothing
-            if (!response) return;
+  ajaxRequest(url).then((envelope) => {
+    if (!envelope) return;
 
-            // Extract HTML and title from the response
-            const { html, title } = response;
+    if (envelope.type === ResponseType.RENDER) {
+      if (envelope.title) document.title = envelope.title;
+      safeReplaceHtml(envelope.html);
 
-            // Update the document title if a new title is provided
-            if (title) document.title = title;
+      const completeNavigation = () => {
+        if (pushState && window.FireLine.redirectedUrl === undefined)
+          window.history.pushState({}, "", url);
 
-            // Update the content of the router target element
-            safeReplaceHtml(html);
+        window.FireLine.context.current = window.location.href;
 
-            // When the content is updated, wait for the next tick
-            Alpine.nextTick(() => {
-                // Update the browser's history state and fire the 'current' route
-                if (pushState && window.FireLine.redirectedUrl === undefined)
-                    window.history.pushState({}, '', url);
+        if (window.FireLine.redirectedUrl === undefined)
+          document.dispatchEvent(window.FireLine.events.navigate);
+      };
 
-                // Update the current route
-                window.FireLine.context.current = window.location.href;
-
-                // Fire the 'loadEnd' event
-                document.dispatchEvent(window.FireLine.events.end);
-
-                // Fire the 'onNavigation' event
-                if (window.FireLine.redirectedUrl === undefined)
-                    document.dispatchEvent(window.FireLine.events.navigate);
-
-                // Set the loading state to false
-                window.FireLine.context.loading = false;
-            });
-        });
+      if (window.Alpine) {
+        window.Alpine.nextTick(completeNavigation);
+      } else {
+        completeNavigation();
+      }
+    } else if (envelope.type === ResponseType.REDIRECT) {
+      window.location.href = envelope.redirect;
+    } else if (envelope.type === ResponseType.NAVIGATE) {
+      navigateTo(envelope.navigate);
+    }
+  });
 }
 
-/**
- * Handles the submission of a form element and processes the server response.
- * 
- * Sends an AJAX request using the form's action URL and method, along with
- * the form data. Based on the server response, performs various actions:
- * 
- * - If the response status is 'success', the form is reset.
- * - If the response contains a 'redirect' property, the window is redirected
- *   to the specified URL.
- * - If the response contains a 'navigate' property, navigates to the specified
- *   URL.
- * - If the response status is 'error', displays the error message next to the
- *   relevant form fields.
- * - If the response contains HTML content, updates the document title and
- *   router content.
- * 
- * After processing the response, fires the 'loadEnd' event and sets the loading
- * state to false.
- * 
- * @param {HTMLFormElement} formEl - The form element to be submitted.
- * @returns {void}
- */
-export function formSubmission(formEl) {
-    ajaxRequest(formEl.getAttribute('action'), formEl.getAttribute('method'), new FormData(formEl))
-        .then(response => {
-            // If the response is invalid then do nothing
-            if (!response) return;
+export function formSubmission(formEl, formState = null) {
+  if (formState) {
+    if (formState.processing) return; // Prevent double submission
+    formState.processing = true;
+    formState.reset();
+  }
 
-            // If the response contains a "status" property set to "success", reset the form
-            if (response.status && response.status === 'success')
-                formEl.reset();
+  const method = (formEl.getAttribute("method") || "GET").toUpperCase();
+  let action = formEl.getAttribute("action") || window.location.href;
+  const formData = new FormData(formEl);
+  let body = formData;
 
-            // If the response contains a "redirect" property, redirect the window to the specified URL
-            if (response.redirect)
-                window.location.href = response.redirect;
+  if (method === "GET") {
+    const params = new URLSearchParams(formData);
+    const urlObj = new URL(action, window.location.origin);
+    urlObj.search = params.toString();
+    action = urlObj.toString();
+    body = null; // GET requests cannot have body
+  }
 
-            // If the response contains a "navigate" property, navigate to the specified url
-            else if (response.navigate) {
-                // Set the loading state to false
-                window.FireLine.context.loading = false;
+  ajaxRequest(action, method, body)
+    .then((envelope) => {
+      if (!envelope) return;
 
-                // Navigate to the specified url
-                navigateTo(response.navigate);
-                return;
-            }
+      if (envelope.type === ResponseType.VALIDATION) {
+        if (formState) {
+          formState.errors = envelope.errors || {};
+          formState.message = envelope.message;
+          formState.status = "validation";
+        } else {
+          console.warn("FireLine: Validation response received but no form state was provided. Use x-form and Alpine form() to handle validation errors.");
+        }
+        return;
+      }
 
-            // If the response contains a "status" property set to "error", display the error message next to the form fields
-            else if (response.status && response.message) {
-                // Loop through the form's children
-                for (const child of formEl.children) {
-                    // If the child has a "status" attribute
-                    child.attributes.status && (
-                        // If the child's status attribute matches the response's status
-                        child.attributes.status.nodeValue === response.status ?
-                            // Display the status message
-                            (child.innerHTML = response.message, child.style.display = 'block') :
-                            // Hide the status message
-                            (child.textContent = '', child.style.display = 'none')
-                    );
-                }
-            }
+      if (envelope.type === ResponseType.SUCCESS) {
+        formEl.reset();
+        if (formState) {
+          formState.message = envelope.message;
+          formState.status = "success";
+        }
+        return;
+      }
 
-            // If the response contains a "content" property, update the document with the specified content
-            else if (response.html) {
-                // Update the document title
-                if (response.title) document.title = response.title;
+      if (envelope.type === ResponseType.REDIRECT) {
+        window.location.href = envelope.redirect;
+        return;
+      }
 
-                // Reset the form
-                formEl.reset();
+      if (envelope.type === ResponseType.NAVIGATE) {
+        navigateTo(envelope.navigate);
+        return;
+      }
 
-                // Update the router content
-                safeReplaceHtml(response.html);
-            }
+      if (
+        envelope.type === ResponseType.ERROR ||
+        envelope.type === ResponseType.MESSAGE
+      ) {
+        if (formState) {
+          formState.message = envelope.message;
+          formState.status = envelope.type === ResponseType.ERROR ? "error" : "success";
+        }
+        return;
+      }
 
-            // When the content is updated, wait for the next tick
-            Alpine.nextTick(() => {
-                // Fire the 'loadEnd' event
-                document.dispatchEvent(window.FireLine.events.end);
-
-                // Set the loading state to false
-                window.FireLine.context.loading = false;
-            });
-        });
+      if (envelope.type === ResponseType.RENDER) {
+        if (envelope.title) document.title = envelope.title;
+        formEl.reset();
+        safeReplaceHtml(envelope.html);
+      }
+    })
+    .finally(() => {
+      if (formState) {
+        formState.processing = false;
+      }
+    });
 }

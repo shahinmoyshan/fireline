@@ -1,6 +1,6 @@
 # FireLine
 
-**FireLine** is a powerful Alpine.js plugin that enhances your web applications with advanced reactivity, seamless integration, and features like server-side rendering of Alpine.js components, form handling, and a robust router.  
+**FireLine** is a powerful Alpine.js plugin that enhances your web applications with advanced reactivity, seamless integration, and features like server-side rendering of Alpine.js components, form handling, and a robust router.
 
 ## Features
 
@@ -8,11 +8,12 @@
 - Intercepts links and forms for dynamic client-side routing.
 - Directives:
   - **`x-navigate`**: Enables dynamic routing using the built-in diffAndPatch algorithm.
-  - **`x-submit`**: Handles form submissions with customizable responses.
+  - **`x-form`**: Handles form submissions reactively with Alpine state integration (New in v2).
+  - **`x-submit`**: Legacy form submission handler (stateless, DOM mutation).
 - Server-side rendering integration for updated content.
-- Customizable plugin settings.
-- Automatic event triggers for lifecycle management (`fireStart`, `fireEnd`, `fireError`).
-- Skip Auto Interception by adding **native** in anchor tag and form element.
+- Inertia-style unexpected response modal for error debugging.
+- Automatic event triggers for lifecycle management.
+- Intelligent response parsing and detection.
 
 ## Installation
 
@@ -29,106 +30,92 @@ Alpine.plugin(FireLine)
 window.Alpine = Alpine
 
 Alpine.start()
-
 ```
-or Include the plugin in your project by adding the built file to your HTML:
+
+Or include the plugin via CDN:
 
 ```html
 <!-- Alpine Plugins -->
-<script src="https://cdn.jsdelivr.net/npm/fireline@1.x.x/dist/cdn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fireline@2.x.x/dist/cdn.min.js"></script>
  
 <!-- Alpine Core -->
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 ```
 
-## Getting Started
-
-### Configuration
-FireLine is globally configurable using the *window.FireLine.settings* object.
-
-### Default Settings
-
-```js
-window.FireLine.settings = {
-    targetEl: '#app > div', // The element to replace with loaded content
-    timeout: 30, // Timeout for the loading state in seconds
-    interceptLinks: true, // Enable link interception for SPA routing
-    interceptForms: true, // Enable form interception for SPA form submissions
-};
-```
-
-To update a setting, simply modify it before initializing Alpine.js:
-
-## Example
+## Quick Start
 
 ```html 
 <div id="app">
     <!-- Element to be replaced from here -->
     <div>
         <a x-navigate href="/about">Go to About</a>
-        <form x-submit action="/api/submit" method="POST">
-            <input type="text" name="email" placeholder="Enter your email" />
-            <button type="submit">Submit</button>
+        
+        <form x-data="{ form: $form() }" x-form action="/api/submit" method="POST">
+            <input type="text" name="email" :class="form.hasError('email') ? 'border-red-500' : ''" />
+            <p x-show="form.hasError('email')" x-text="form.firstError('email')"></p>
+            <button type="submit" :disabled="form.processing">Submit</button>
         </form>
     </div>
-    <!-- Element to be replaced to here -->
 </div>
-<script>
-    document.addEventListener('alpine:init', () => {
-        // Customize Settings
-        window.FireLine.settings.targetEl = '#app > div';
-        window.FireLine.settings.timeout = 40;
-        window.FireLine.settings.interceptLinks = false;
-        window.FireLine.settings.interceptForms = false;
-    });
-</script>
 ```
-**NOTE:** every html response should have only **one** root laval element.
 
-### Directives
+**NOTE:** Every HTML response should have only **one** root element.
 
-### x-navigate
-The **x-navigate** directive dynamically loads and renders content:
+## Configuration Reference
 
+FireLine is globally configurable using the `window.FireLine.settings` object.
+
+```js
+window.FireLine.settings = {
+    targetEl: '#app > div', // The element to replace with loaded content
+    timeout: 30, // Timeout for the loading state in seconds
+    interceptLinks: false, // Enable link interception globally
+    interceptForms: false, // Enable form interception globally
+    abortOnNewRequest: true, // Cancel in-flight request when a new one starts
+    csrfToken: null, // String: injected as X-CSRF-TOKEN header
+    headers: {}, // Additional headers for all requests
+    showUnexpectedModal: true, // Show Inertia-style modal on non-JSON responses
+    
+    // Callbacks
+    onUnauthenticated: null, // function(response) | called on 401
+    onForbidden: null, // function(response) | called on 403
+    onServerError: null, // function(response) | called on 5xx
+    onUnexpectedResponse: null, // function(statusCode, html) | overrides modal
+};
+```
+
+## Directives
+
+### `x-navigate`
+Dynamically loads and renders content:
 ```html
 <a x-navigate href="/new-page">Navigate to New Page</a>
 ```
+Uses `diffAndPatch` for DOM updates. Replace Alpine short attributes (e.g., `@click`) with full forms (`x-on:click`) to avoid compatibility issues.
 
-- Uses **diffAndPatch** for DOM updates.
-- Ensure Alpine short attributes (e.g., **@click**, **@input**) are replaced with their full form (e.g., **x-on:click**, **x-on:input**).
-
-#### Server Response Handling
-The response object can include:
-- **title**: (Optional) the *title* to update the document.
-- **html**: (Required) the router response to be rendered.
-
-### x-submit
-
-Handles form submissions dynamically with server responses:
-
+### `x-form` (New)
+Wires a form element to a `$form` state automatically. It reacts to server validation errors.
 ```html
-<form x-submit action="/submit-form" method="POST">
-    <!-- Optional: Form Alert -->
-    <div status="success" style="color:green"></div>
-    <div status="error" style="color:red"></div>
-    
-    <input type="text" name="name" placeholder="Enter your name" />
-    <button type="submit">Submit</button>
+<form x-data="{ form: $form() }" x-form action="/register" method="POST">
+    <div x-show="form.message" x-text="form.message"></div>
+    <input name="email" :class="form.hasError('email') ? 'border-red-500' : ''">
+    <p x-show="form.hasError('email')" x-text="form.firstError('email')"></p>
+    <button :disabled="form.processing">Submit</button>
 </form>
 ```
 
-**Server Response Handling**
-The response object can include:
-
-- **status** and **message**: Shows an alert under the form.
-- **html** and **title**: Renders new HTML content using diffAndPatch.
-- **redirect** or **navigate**: Redirects or navigates to a new route.
+### `x-submit` (Legacy)
+Handles form submissions without Alpine reactive state binding. Error display relies on DOM mutation with `status` attributes.
+```html
+<form x-submit action="/submit-form" method="POST">
+    <div status="success" style="color:green"></div>
+    <div status="error" style="color:red"></div>
+</form>
+```
 
 ## `$fire` Magic Property
 
-FireLine introduces the `$fire` magic property, providing a powerful and intuitive way to interact with the router and manage navigation, loading states, and server-side form submissions directly in your Alpine.js components.
-
-### Available Properties and Methods
+FireLine provides the `$fire` magic property to interact with the router directly from components.
 
 - **`$fire.current`**: The current URL path.
 - **`$fire.loading`**: Boolean indicating whether the router is currently loading.
@@ -137,70 +124,60 @@ FireLine introduces the `$fire` magic property, providing a powerful and intuiti
 - **`$fire.replaceHtml(html)`**: Replaces the router content with the provided HTML.
 - **`$fire.formSubmit(formEl)`**: Submits a form to the server and handles the response.
 
-## Example Usage
+## Form State (`form()`)
 
-#### Highlight Active Links
-```html
-<a :class="$fire.current == '/' && 'text-green-600'" href="/">Home</a>
-<a :class="$fire.current.startsWith('/about') && 'text-green-600'" href="/about">About</a>
+The new form state manager makes it easy to handle loading, messages, and validation errors.
+
+```js
+// Usage inside Alpine x-data
+x-data="{ ...form({ name: '', email: '' }) }"
 ```
 
-#### Navigation Buttons
-```html
-<button x-on:click="$fire.navigate('/dashboard')" class="btn">Go to Dashboard</button>
-<button x-on:click="$fire.reload()" class="btn">Reload Page</button>
-```
+Available reactive properties:
+- **`$data.form.processing`**: boolean — true while submitting.
+- **`$data.form.message`**: string — top-level response message.
+- **`$data.form.errors`**: object — field-keyed error bag `{ name: ['...'], email: ['...'] }`.
+- **`$data.form.status`**: string — 'success' | 'error' | 'validation' | null.
+- **`$data.form.reset()`**: resets errors and message.
+- **`$data.form.submit(formEl)`**: programmatic submission.
+- **`$data.form.hasError(field)`**: boolean.
+- **`$data.form.firstError(field)`**: string | null.
 
-#### Custom Content Replacement
-```html
-<div id="app">
-    <div>
-        <button x-on:click="$fire.replaceHtml('<div><h1>Welcome to FireLine!</h1></div>')" class="btn">
-            Update Content
-        </button>
-    </div>
-</div>
-```
+## Server Response Protocol
 
-**Note:** In *replaceHtml* function the input Html should contain *only one root laval element*.
+FireLine understands the following server response shapes automatically:
 
-#### Server-Side Form Submission
+- **Render:** `{ html: '...', title: '...' }` (Replaces DOM content)
+- **Redirect:** `{ redirect: '/url' }` (Hard redirect)
+- **Navigate:** `{ navigate: '/url' }` (SPA pushState navigation)
+- **Success:** `{ status: 'success', message: '...' }`
+- **Validation:** `{ message: '...', errors: { email: ['Invalid'] } }` (HTTP 422)
+- **Error:** `{ status: 'error', message: '...' }` (HTTP 400/500)
 
-```html
-<form x-data x-on:submit="$fire.formSubmit($el)">
-    <input type="text" name="username" placeholder="Enter username" required>
-    <button type="submit" class="btn">Submit</button>
-</form>
-```
+## Unexpected Response Modal
 
-## Notes
-- Use **$fire.navigate(url)** to programmatically navigate between pages.
-- When using server-side form submission, make sure your form's response includes **one** of the following properties:
-    - **status** and **message**: Displays an alert under the form.
-    - **html** and **title**: Updates the content via replaceHtml.
-    - **redirect** or **navigate**: Redirects or navigates to a specific route.
-- Ensure Alpine.js shorthand attributes (e.g., **@click**) are replaced with full syntax (**x-on:click**) when using the **replaceHtml** function to avoid compatibility issues.
+When the server returns a non-JSON body (e.g., a full HTML page for a 500 error, session timeout), FireLine displays an Inertia-style modal. This shows the exact error HTML rendered in an iframe for easy debugging. Disable it with `settings.showUnexpectedModal = false`.
 
-The **$fire** magic property simplifies complex routing and state management, making it easier to build dynamic and reactive Alpine.js applications with FireLine.
+## Events
 
-### Tips for Usage
+FireLine emits the following events on `document`:
 
-- **Use Full Attribute Names:**
-    Replace Alpine short attributes (**@click**, **@input**) with full ones (**x-on:click**, **x-on:input**) to avoid issues with the dom rendering.
-- **Avoid Mixed Bind Attributes:**
-    If using **x-bind:class**, **x-bind:style**, etc do not include generic attributes (class, style, etc) to prevent conflicts. Example:
-    
-    ```html
-    <!-- Avoid this -->
-    <div class="bg-red-500" x-bind:class="isActive ? 'text-white' : 'text-gray-500'"></div>
+- `fireStart`: Start of navigation/submission.
+- `fireEnd`: After successful navigation/submission.
+- `fireError`: On catchable error.
+- `fireNavigate`: On route change.
+- `fireValidation`: When a 422 validation response is received.
+- `fireUnexpected`: When a non-JSON unexpected response is received.
 
-    <!-- Recommended -->
-    <div x-bind:class="isActive ? 'bg-red-500 text-white' : 'bg-red-500 text-gray-500'"></div>
-    ```
+## Backend Integration
 
-### Events
-FireLine emits the following events during its lifecycle:
+FireLine works with any backend that implements the JSON response protocol and checks for the `X-FireLine` header.
 
-- **fireStart**: Triggered at the start of navigation or submission.
-- **fireEnd**: Triggered after successful navigation or submission.
-- **fireError**: Triggered when an error occurs.
+For TinyMVC/Spark, use the official adapter:
+`composer require tinymvc/fireline-php`
+
+## Migration Guide (v1.x → v2.0)
+
+- The AJAX header sent is now `X-FireLine` (instead of `X-Fireline-Agent`).
+- The response parser has been rewritten to be robust and structured. Ensure your backend returns the expected JSON schemas.
+- `x-submit` retains legacy behavior, but we encourage migrating to `x-form` and `$data.form` for superior reactivity.
