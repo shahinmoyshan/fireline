@@ -43,7 +43,7 @@ export function createPartial(url, initialData = {}) {
               }
             }
           },
-          { silent: true },
+          { silent: true, partial: true },
         );
       } catch (err) {
         this.error = err.message;

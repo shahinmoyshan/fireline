@@ -16,7 +16,7 @@ export async function ajaxRequest(
 ) {
   method = method.toUpperCase();
   const isGet = method === "GET";
-  const { silent = false, preload = false } = options;
+  const { silent = false, preload = false, partial = false } = options;
   const settings = window.FireLine.settings;
   const url = httpUrl(path);
 
@@ -51,6 +51,7 @@ export async function ajaxRequest(
     headers.set("X-Requested-With", "XMLHttpRequest");
     headers.set("X-FireLine", "1");
     if (preload) headers.set("X-FireLine-Preload", "1");
+    if (partial) headers.set("X-FireLine-Partial", "1");
     if (settings.csrfToken) headers.set("X-CSRF-TOKEN", settings.csrfToken);
 
     const fetchOptions = {
