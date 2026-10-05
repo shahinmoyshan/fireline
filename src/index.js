@@ -63,7 +63,7 @@ export default (Alpine) => {
   Alpine.magic("form", () => createForm);
   Alpine.magic("partial", () => createPartial);
 
-  Alpine.directive("navigate", (el, { expression }, { evaluate, cleanup }) => {
+  Alpine.directive("navigate", (el, { expression, modifiers }, { evaluate, cleanup }) => {
     const onClick = (event) => {
       if (!canNavigate(event, el)) return;
       event.preventDefault();
@@ -72,6 +72,15 @@ export default (Alpine) => {
     };
     el.addEventListener("click", onClick);
     cleanup(() => el.removeEventListener("click", onClick));
+    
+    if (modifiers.includes("hover") || modifiers.includes("mouseover")) {
+        const url = el.getAttribute("href");
+        if (url) {
+            const onEnter = () => ajaxRequest(url, "GET", null, null, { silent: true, preload: true });
+            el.addEventListener("mouseenter", onEnter, { once: true });
+            cleanup(() => el.removeEventListener("mouseenter", onEnter));
+        }
+    }
   });
 
   Alpine.directive("preload", (el, { modifiers }, { cleanup }) => {
@@ -102,10 +111,19 @@ export default (Alpine) => {
     cleanup(() => clearInterval(timer));
   });
 
-  Alpine.directive("partial", (el, { expression }, { evaluate }) => {
+  Alpine.directive("partial", (el, { expression, modifiers }, { evaluate }) => {
     const partialState = expression ? evaluate(expression) : null;
     if (partialState && typeof partialState.setTarget === "function") {
       partialState.setTarget(el);
+      if (modifiers.includes("lazy") || modifiers.includes("intersect")) {
+          const observer = new IntersectionObserver(entries => {
+              if (entries[0].isIntersecting) {
+                  partialState.load();
+                  observer.disconnect();
+              }
+          });
+          observer.observe(el);
+      }
     }
   });
 
@@ -132,8 +150,15 @@ export default (Alpine) => {
   registerForm("form");
   registerForm("submit", true);
 
-  window.addEventListener("popstate", () =>
-    navigateTo(window.location.href, false),
+  window.addEventListener("popstate", (event) =>
+    navigateTo(window.location.href, false).then(() => {
+        if (event.state && event.state.scroll) {
+            window.scrollTo(event.state.scroll.x, event.state.scroll.y);
+        } else if (window.location.hash) {
+            const hashEl = document.getElementById(window.location.hash.substring(1));
+            if (hashEl) hashEl.scrollIntoView();
+        }
+    })
   );
   window.addEventListener(
     "pageshow",

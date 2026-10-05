@@ -61,12 +61,13 @@ An intercepted request to `/about` must return `Content-Type: application/json`:
 <a x-navigate="menuOpen = false" href="/settings">Settings</a>
 ```
 
-### Preloading and Polling (New in v2)
+### Preloading and Polling
 FireLine supports declarative preloading and polling without extra JS:
 
 - **`x-preload`**: Prefetches the page in the background silently.
   - `<a href="/heavy" x-navigate x-preload>` (Immediate fetch)
   - `<a href="/heavy" x-navigate x-preload.mouseover>` (Fetches when mouse hovers)
+  - `<a href="/heavy" x-navigate.hover>` (Shorthand to navigate and fetch on hover)
 - **`x-poll`**: Automatically reloads the current page at an interval while the element is in the DOM.
   - `<div x-poll="10000"></div>` (Refreshes every 10 seconds. Default is 5000ms).
 
@@ -80,9 +81,22 @@ Load isolated HTML fragments without triggering the global loading bar or changi
     <!-- The server HTML response replaces the container entirely, merging state -->
     
     <button @click="comments.loadMore('/api/comments/2')">Load More</button>
-    <button @click="comments.startInterval(10000)">Live Updates</button>
 </div>
 ```
+
+You can natively lazy-load partials when they scroll into view using `.lazy` or `.intersect`:
+```html
+<!-- Automatically calls comments.load() when scrolled into view -->
+<div x-data="{ comments: $partial('/comments') }" x-partial.lazy="comments">...</div>
+```
+
+### Advanced UI / UX (v2.1 Features)
+FireLine includes built-in configurations to rival heavy SPA frameworks:
+- **View Transitions API:** Set `FireLine.settings.viewTransitions = true` to get native slide/fade page transitions across navigations automatically.
+- **Progress Bar:** A top-edge loading progress bar is automatically enabled via `FireLine.settings.progressBar = true` and `FireLine.settings.progressColor = '#29d'`.
+- **Scroll Restoration:** Native scroll restoration and URL hash jumping (`/page#section`) are fully supported on `popstate` back/forward navigation.
+- **Asset Versioning:** Set `FireLine.settings.assetVersion = 'v2.1'` in JS. If the server sends an `X-FireLine-Asset-Version` header that mismatches, FireLine will force a hard page reload to seamlessly update CSS/JS without breaking the app.
+- **Persistent DOM (`x-ignore`):** Place `x-ignore` on any element (like an audio player) and FireLine will never overwrite or morph it during page navigations.
 
 `x-navigate` handles ordinary same-origin HTTP(S) clicks. Modified clicks, downloads, other browsing targets, `native` links, non-HTTP links and same-page hash links keep browser behavior. Global interception is opt-in:
 
@@ -210,6 +224,11 @@ Change individual fields or use `Object.assign(FireLine.settings, {...})` to ret
 | `headers` | `{}` | Additional Fetch headers; FireLine identification headers are enforced |
 | `executeScripts` | `true` | Execute scripts in trusted fragments |
 | `showUnexpectedModal` | `true` | Display unexpected responses in a sandboxed iframe |
+| `viewTransitions` | `false` | Use `document.startViewTransition()` on replaces |
+| `progressBar` | `false` | Show built-in top-edge loading bar |
+| `progressColor` | `'#29d'` | Color for the top-edge progress bar |
+| `assetVersion` | `null` | Hard-reload on mismatch with `X-FireLine-Asset-Version` header |
+| `focusOnError` | `false` | Focus the first input field upon validation failure |
 | `onUnauthenticated` | `null` | `(response, envelope) => {}` for HTTP 401 |
 | `onForbidden` | `null` | `(response, envelope) => {}` for HTTP 403 |
 | `onServerError` | `null` | `(response, envelope) => {}` for HTTP 5xx |

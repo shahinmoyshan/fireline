@@ -1,6 +1,7 @@
 import { emit, httpUrl, triggerError } from "./helpers";
 import { parseResponse, ResponseType } from "./response";
 import { showUnexpectedResponseModal } from "./modal";
+import { startProgress, stopProgress } from "./progress";
 
 let currentGetRequestController = null;
 let activeRequests = 0;
@@ -40,6 +41,7 @@ export async function ajaxRequest(
   if (!silent) {
     activeRequests++;
     window.FireLine.context.loading = true;
+    if (activeRequests === 1) startProgress();
     emit("start", { url: url.href, method });
   }
 
@@ -72,6 +74,15 @@ export async function ajaxRequest(
       }, settings.timeout * 1000);
 
     const response = await fetch(url.href, fetchOptions);
+
+    if (response.headers.has('X-FireLine-Asset-Version')) {
+      const serverVersion = response.headers.get('X-FireLine-Asset-Version');
+      if (settings.assetVersion && settings.assetVersion !== serverVersion) {
+        window.location.reload();
+        return null;
+      }
+    }
+
     const envelope = await parseResponse(response);
     clearTimeout(timer);
 
@@ -133,6 +144,7 @@ export async function ajaxRequest(
       currentGetRequestController = null;
     if (!silent) {
       activeRequests--;
+      if (activeRequests === 0) stopProgress();
       window.FireLine.context.loading = activeRequests > 0;
       emit("end", {
         url: url.href,

@@ -15,11 +15,17 @@ async function render(envelope, url, pushState, current = () => true) {
   if (envelope.title !== null) document.title = envelope.title;
   if (url) {
     const destination = httpUrl(url);
-    if (pushState && destination.href !== location.href)
+    if (pushState && destination.href !== location.href) {
+      history.replaceState({ scroll: { x: window.scrollX, y: window.scrollY } }, "", location.href);
       history.pushState({}, "", destination.href);
-    else if (!pushState && destination.href !== location.href)
+    } else if (!pushState && destination.href !== location.href) {
       history.replaceState(history.state, "", destination.href);
+    }
     window.FireLine.context.current = location.href;
+    if (destination.hash && pushState) {
+      const hashEl = document.getElementById(destination.hash.substring(1));
+      if (hashEl) hashEl.scrollIntoView();
+    }
   }
 
   await alpine()?.nextTick();
@@ -68,7 +74,18 @@ function setFormResult(form, state, envelope) {
   if (state) {
     state.message = envelope.message;
     state.status = status;
-    if (status === "validation") state.errors = envelope.errors;
+    if (status === "validation") {
+      state.errors = envelope.errors;
+      if (window.FireLine?.settings.focusOnError && typeof envelope.errors === 'object' && envelope.errors !== null) {
+          const firstErrorKey = Object.keys(envelope.errors)[0];
+          if (firstErrorKey) {
+              const input = form.querySelector(`[name="${firstErrorKey}"]`);
+              if (input && typeof input.focus === 'function') {
+                  input.focus();
+              }
+          }
+      }
+    }
   } else {
     for (const el of form.querySelectorAll(
       '[status="success"], [status="error"]',

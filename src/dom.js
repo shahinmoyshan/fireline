@@ -310,7 +310,21 @@ export async function replaceHtml(targetEl, html, baseUrl = document.baseURI) {
   if (!targetEl?.parentNode)
     throw new Error("Router target element is detached.");
   const newContent = roots[0];
-  const live = diffAndPatch(targetEl.parentNode, targetEl, newContent);
+  const doReplace = () => diffAndPatch(targetEl.parentNode, targetEl, newContent);
+  let live;
+  if (window.FireLine?.settings.viewTransitions && document.startViewTransition) {
+      await new Promise(resolve => {
+          const transition = document.startViewTransition(() => {
+              live = doReplace();
+              resolve();
+          });
+          // Ensure resolve is called if transition fails
+          transition.finished.catch(() => resolve());
+      });
+  } else {
+      live = doReplace();
+  }
+  
   if (window.FireLine?.settings.executeScripts !== false) {
     await injectScripts(newContent.querySelectorAll("script"), baseUrl);
   }
