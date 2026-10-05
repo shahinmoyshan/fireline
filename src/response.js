@@ -8,11 +8,13 @@ export const ResponseType = {
   MESSAGE: "message",
   UNEXPECTED: "unexpected",
 };
+const object = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 
-export async function parseResponse(fetchResponse) {
+export async function parseResponse(response) {
   const envelope = {
     type: ResponseType.UNEXPECTED,
-    status: fetchResponse.status,
+    status: response.status,
     message: null,
     errors: {},
     html: null,
@@ -22,53 +24,57 @@ export async function parseResponse(fetchResponse) {
     raw: null,
     rawHtml: null,
   };
-
-  const contentType = fetchResponse.headers.get("content-type") || "";
-
-  if (contentType.includes("application/json")) {
-    try {
-      const data = await fetchResponse.json();
-      envelope.raw = data;
-
-      if (fetchResponse.status === 422 && data.errors) {
-        envelope.type = ResponseType.VALIDATION;
-        envelope.message = data.message || "Validation failed.";
-        envelope.errors = data.errors;
-      } else if (data.html) {
-        envelope.type = ResponseType.RENDER;
-        envelope.html = data.html;
-        envelope.title = data.title || null;
-      } else if (data.redirect) {
-        envelope.type = ResponseType.REDIRECT;
-        envelope.redirect = data.redirect;
-      } else if (data.navigate) {
-        envelope.type = ResponseType.NAVIGATE;
-        envelope.navigate = data.navigate;
-      } else if (data.status === "success") {
-        envelope.type = ResponseType.SUCCESS;
-        envelope.message = data.message || null;
-      } else if (data.status === "error" && data.message) {
-        envelope.type = ResponseType.ERROR;
-        envelope.message = data.message;
-      } else if (data.message) {
-        envelope.type = ResponseType.MESSAGE;
-        envelope.message = data.message;
-      } else {
-        envelope.type = ResponseType.UNEXPECTED;
-        envelope.rawHtml = JSON.stringify(data, null, 2);
-      }
-    } catch (e) {
-      envelope.type = ResponseType.UNEXPECTED;
-      envelope.rawHtml = "Failed to parse JSON response: " + e.message;
-    }
-  } else {
-    envelope.type = ResponseType.UNEXPECTED;
-    try {
-      envelope.rawHtml = await fetchResponse.text();
-    } catch (e) {
-      envelope.rawHtml = "Unable to read response body.";
-    }
+  // Let stream failures reach the request handler so aborts/timeouts stay aborts.
+  const text = await response.text();
+  envelope.rawHtml = text;
+  const mime = (response.headers.get("content-type") || "")
+    .split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (
+    mime !== "application/json" &&
+    !/^application\/[\w.+-]+\+json$/.test(mime)
+  )
+    return envelope;
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return envelope;
   }
-
+  envelope.raw = data;
+  if (!object(data)) return envelope;
+  const message = typeof data.message === "string" ? data.message : null;
+  envelope.message = message;
+  if (response.status === 422 && object(data.errors)) {
+    envelope.type = ResponseType.VALIDATION;
+    envelope.message = message ?? "Validation failed.";
+    envelope.errors = Object.fromEntries(
+      Object.entries(data.errors).map(([field, errors]) => [
+        field,
+        (Array.isArray(errors) ? errors : [errors]).filter(
+          (error) => typeof error === "string",
+        ),
+      ]),
+    );
+  } else if (!response.ok) {
+    if (message !== null) envelope.type = ResponseType.ERROR;
+  } else if (typeof data.redirect === "string" && data.redirect) {
+    envelope.type = ResponseType.REDIRECT;
+    envelope.redirect = data.redirect;
+  } else if (typeof data.navigate === "string" && data.navigate) {
+    envelope.type = ResponseType.NAVIGATE;
+    envelope.navigate = data.navigate;
+  } else if (typeof data.html === "string") {
+    envelope.type = ResponseType.RENDER;
+    envelope.html = data.html;
+    envelope.title = typeof data.title === "string" ? data.title : null;
+  } else if (data.status === "success") {
+    envelope.type = ResponseType.SUCCESS;
+  } else if (data.status === "error") {
+    envelope.type = ResponseType.ERROR;
+  } else if (message !== null) {
+    envelope.type = ResponseType.MESSAGE;
+  }
   return envelope;
 }

@@ -14,8 +14,8 @@ export function createForm(initialData = {}) {
       this.status = null;
     },
 
-    submit(formEl) {
-      formSubmission(formEl, this);
+    submit(formEl, submitter = null) {
+      return formSubmission(formEl, this, submitter);
     },
 
     hasError(field) {

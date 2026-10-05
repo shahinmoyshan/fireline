@@ -16,9 +16,30 @@
     "module": "dist/module.esm.js",
     "unpkg": "dist/cdn.min.js",
     "scripts": {
-        "build": "node scripts/build.js"
+        "build": "node scripts/build.js",
+        "test": "node --test tests/*.test.cjs",
+        "test:browser": "npm run build && node tests/browser.cjs",
+        "test:integration": "npm run build && node tests/browser.cjs --php",
+        "prepack": "npm run build"
     },
     "devDependencies": {
-        "esbuild": "^0.21.5"
+        "@playwright/test": "^1.56.1",
+        "alpinejs": "^3.15.0",
+        "esbuild": "^0.21.5",
+        "jsdom": "^26.1.0"
+    },
+    "files": [
+        "dist",
+        "src",
+        "builds",
+        "scripts/build.js"
+    ],
+    "peerDependencies": {
+        "alpinejs": "^3.15.0"
+    },
+    "peerDependenciesMeta": {
+        "alpinejs": {
+            "optional": true
+        }
     }
 }

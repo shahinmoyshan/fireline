@@ -1,120 +1,102 @@
-import { triggerError } from "./helpers";
+import { emit, httpUrl, triggerError } from "./helpers";
 import { parseResponse, ResponseType } from "./response";
 import { showUnexpectedResponseModal } from "./modal";
 
 let currentGetRequestController = null;
+let activeRequests = 0;
 
-export async function ajaxRequest(path, method = "get", body = null) {
-  const isGet = method.toUpperCase() === "GET";
-
-  if (isGet && window.FireLine.settings.abortOnNewRequest && currentGetRequestController) {
-    currentGetRequestController.abort();
-  }
-  
-  const abortController = new AbortController();
-  if (isGet) {
-    currentGetRequestController = abortController;
-  }
-
-  // Fire the 'start' event
-  document.dispatchEvent(window.FireLine.events.start);
-
-  // Reset the redirected URL
-  window.FireLine.redirectedUrl = undefined;
-
-  // Set the loading state to true
+// consume keeps loading/fireEnd scoped to response handling as well as transport.
+export async function ajaxRequest(
+  path,
+  method = "GET",
+  body = null,
+  consume = null,
+) {
+  method = method.toUpperCase();
+  const isGet = method === "GET";
+  const settings = window.FireLine.settings;
+  if (isGet && settings.abortOnNewRequest) currentGetRequestController?.abort();
+  const controller = new AbortController();
+  if (isGet) currentGetRequestController = controller;
+  let timer;
+  let timedOut = false;
+  activeRequests++;
   window.FireLine.context.loading = true;
-
+  emit("start", { url: String(path), method });
   try {
-    const headers = {
-      Accept: "application/json",
-      "X-Requested-With": "XMLHttpRequest",
-      "X-FireLine": "1",
-      ...window.FireLine.settings.headers,
+    const url = httpUrl(path);
+    if (url.origin !== location.origin)
+      throw new Error("FireLine AJAX requests must be same-origin.");
+    const headers = new Headers(settings.headers);
+    if (!headers.has("Accept")) headers.set("Accept", "application/json");
+    headers.set("X-Requested-With", "XMLHttpRequest");
+    headers.set("X-FireLine", "1");
+    if (settings.csrfToken) headers.set("X-CSRF-TOKEN", settings.csrfToken);
+    const options = {
+      method,
+      headers,
+      signal: controller.signal,
+      credentials: "same-origin",
+      mode: "same-origin",
     };
-
-    if (window.FireLine.settings.csrfToken) {
-      headers["X-CSRF-TOKEN"] = window.FireLine.settings.csrfToken;
-    }
-
-    const fetchOptions = {
-      method: method,
-      headers: headers,
-      signal: abortController.signal,
-    };
-
-    if (body) {
-      fetchOptions.body = body;
-    }
-
-    let timeoutId;
-    if (window.FireLine.settings.timeout > 0) {
-      timeoutId = setTimeout(
-        () => abortController.abort("timeout"),
-        1000 * window.FireLine.settings.timeout,
-      );
-    }
-
-    const response = await fetch(path, fetchOptions);
-
-    if (timeoutId) clearTimeout(timeoutId);
-
-    if (response.redirected && response.url && !response.url.endsWith(path)) {
-      const redirectedUrl = new URL(response.url);
-      if (window.location.origin === redirectedUrl.origin) {
-        if (window.FireLine.redirectedUrl === undefined) {
-          window.history.pushState({}, "", redirectedUrl);
-          window.FireLine.redirectedUrl = redirectedUrl;
-          document.dispatchEvent(window.FireLine.events.navigate);
-        }
-      }
-    }
-
+    if (body !== null && method !== "GET" && method !== "HEAD")
+      options.body = body;
+    if (settings.timeout > 0)
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, settings.timeout * 1000);
+    const response = await fetch(url.href, options);
     const envelope = await parseResponse(response);
-
-    if (envelope.type === ResponseType.UNEXPECTED) {
-      document.dispatchEvent(window.FireLine.events.unexpected);
-      if (
-        response.status === 401 &&
-        typeof window.FireLine.settings.onUnauthenticated === "function"
-      ) {
-        window.FireLine.settings.onUnauthenticated(response);
-      } else if (
-        response.status === 403 &&
-        typeof window.FireLine.settings.onForbidden === "function"
-      ) {
-        window.FireLine.settings.onForbidden(response);
-      } else if (
-        response.status >= 500 &&
-        typeof window.FireLine.settings.onServerError === "function"
-      ) {
-        window.FireLine.settings.onServerError(response);
-      } else if (
-        typeof window.FireLine.settings.onUnexpectedResponse === "function"
-      ) {
-        window.FireLine.settings.onUnexpectedResponse(
-          response.status,
-          envelope.rawHtml,
-        );
-      } else if (window.FireLine.settings.showUnexpectedModal) {
-        showUnexpectedResponseModal(response.status, envelope.rawHtml);
-      }
-    } else if (envelope.type === ResponseType.VALIDATION) {
-      document.dispatchEvent(window.FireLine.events.validation);
-    }
-
-    return envelope;
-  } catch (error) {
-    if (error.name === "AbortError") {
+    clearTimeout(timer);
+    if (controller.signal.aborted) {
+      if (timedOut) throw new Error("FireLine request timed out.");
       return null;
     }
-    triggerError(error);
+    envelope.url = response.url || url.href;
+    envelope.redirected = response.redirected;
+    const handler =
+      response.status === 401
+        ? settings.onUnauthenticated
+        : response.status === 403
+          ? settings.onForbidden
+          : response.status >= 500
+            ? settings.onServerError
+            : null;
+    if (typeof handler === "function") await handler(response, envelope);
+    if (controller.signal.aborted) return null;
+    if (envelope.type === ResponseType.UNEXPECTED) {
+      emit("unexpected", { response, envelope });
+      if (typeof handler !== "function") {
+        if (typeof settings.onUnexpectedResponse === "function") {
+          await settings.onUnexpectedResponse(
+            response.status,
+            envelope.rawHtml,
+          );
+        } else if (settings.showUnexpectedModal) {
+          showUnexpectedResponseModal(response.status, envelope.rawHtml);
+        }
+      }
+    } else if (envelope.type === ResponseType.VALIDATION) {
+      emit("validation", { envelope });
+    }
+    if (controller.signal.aborted) return null;
+    if (consume) await consume(envelope);
+    return envelope;
+  } catch (error) {
+    if (timedOut) triggerError(new Error("FireLine request timed out."));
+    else if (!controller.signal.aborted) triggerError(error);
     return null;
   } finally {
-    window.FireLine.context.loading = false;
-    document.dispatchEvent(window.FireLine.events.end);
-    if (isGet) {
-        currentGetRequestController = null;
-    }
+    clearTimeout(timer);
+    if (currentGetRequestController === controller)
+      currentGetRequestController = null;
+    activeRequests--;
+    window.FireLine.context.loading = activeRequests > 0;
+    emit("end", {
+      url: String(path),
+      method,
+      aborted: controller.signal.aborted,
+    });
   }
 }

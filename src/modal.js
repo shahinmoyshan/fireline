@@ -52,6 +52,8 @@ export function showUnexpectedResponseModal(statusCode, html) {
 
   const iframe = document.createElement("iframe");
   iframe.style.cssText = "width: 100%; height: 100%; border: none;";
+  iframe.setAttribute("sandbox", "");
+  iframe.title = "FireLine unexpected server response";
   iframe.srcdoc = html || "<i>No HTML provided</i>";
 
   iframeWrapper.appendChild(iframe);

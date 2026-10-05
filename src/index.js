@@ -1,5 +1,6 @@
 import { navigateTo, formSubmission } from "./page";
-import { safeReplaceHtml } from "./helpers";
+import { safeReplaceHtml, canNavigate, canSubmit } from "./helpers";
+import { setAlpine } from "./dom";
 import { createForm } from "./form";
 import {
   showUnexpectedResponseModal,
@@ -7,6 +8,9 @@ import {
 } from "./modal";
 
 export default (Alpine) => {
+  if (Alpine.fire && window.FireLine?.context === Alpine.fire) return;
+  setAlpine(Alpine);
+
   const FireLine = Alpine.reactive({
     version: "2.0.0",
     name: "fireline",
@@ -31,15 +35,16 @@ export default (Alpine) => {
       onServerError: null,
       onUnexpectedResponse: null,
       showUnexpectedModal: true,
+      executeScripts: true,
     },
     context: {
       current: window.location.href,
       loading: false,
-      redirectedUrl: undefined,
       navigate: (url) => navigateTo(url),
-      reload: () => navigateTo(window.location.href),
+      reload: () => navigateTo(window.location.href, false),
       replaceHtml: (html) => safeReplaceHtml(html),
-      formSubmit: (formEl) => formSubmission(formEl),
+      formSubmit: (formEl, formState = null, submitter = null) =>
+        formSubmission(formEl, formState, submitter),
     },
   });
 
@@ -56,39 +61,37 @@ export default (Alpine) => {
 
   Alpine.directive("navigate", (el, { expression }, { evaluate, cleanup }) => {
     const onClick = (event) => {
+      if (!canNavigate(event, el)) return;
       event.preventDefault();
-      const url = el.getAttribute("href");
-      if (!url) return;
       if (expression) evaluate(expression);
-      navigateTo(url);
+      navigateTo(el.href);
     };
     el.addEventListener("click", onClick);
     cleanup(() => el.removeEventListener("click", onClick));
   });
 
-  Alpine.directive("form", (el, { expression }, { evaluate, cleanup }) => {
-    const onSubmit = (event) => {
-      event.preventDefault();
-
-      let formState = null;
-      if (expression) {
-        formState = evaluate(expression);
-      } else {
-        const data = el._x_dataStack
-          ? Object.assign({}, ...el._x_dataStack.reverse())
-          : {};
-        formState = data.form;
-      }
-
-      if (formState && typeof formState.reset === "function") {
-        formSubmission(el, formState);
-      } else {
-        formSubmission(el, null);
-      }
-    };
-    el.addEventListener("submit", onSubmit);
-    cleanup(() => el.removeEventListener("submit", onSubmit));
-  });
+  const formStateFor = (el) => {
+    const form = Alpine.$data(el).form;
+    return form && typeof form.reset === "function" ? form : null;
+  };
+  const registerForm = (name, legacy = false) =>
+    Alpine.directive(name, (el, { expression }, { evaluate, cleanup }) => {
+      const onSubmit = (event) => {
+        if (event.defaultPrevented || !canSubmit(el, event.submitter)) return;
+        event.preventDefault();
+        const result = expression ? evaluate(expression) : null;
+        const state = legacy ? null : expression ? result : formStateFor(el);
+        formSubmission(
+          el,
+          state && typeof state.reset === "function" ? state : null,
+          event.submitter,
+        );
+      };
+      el.addEventListener("submit", onSubmit);
+      cleanup(() => el.removeEventListener("submit", onSubmit));
+    });
+  registerForm("form");
+  registerForm("submit", true);
 
   window.addEventListener("popstate", () =>
     navigateTo(window.location.href, false),
@@ -98,42 +101,31 @@ export default (Alpine) => {
     (e) => e.persisted && window.location.reload(),
   );
 
-  window.document.body.addEventListener("click", (event) => {
-    if (window.FireLine.settings.interceptLinks === false) return;
-    const anchor = event.target.closest("a");
+  document.addEventListener("click", (event) => {
+    if (!window.FireLine.settings.interceptLinks) return;
+    const anchor = event.target.closest?.("a");
     if (
-      anchor &&
-      !anchor.hasAttribute("native") &&
-      !anchor.hasAttribute("x-navigate") &&
-      anchor.target !== "_blank" &&
-      anchor.hostname === window.location.hostname
-    ) {
-      event.preventDefault();
-      const url = anchor.getAttribute("href");
-      if (!url) return;
-      navigateTo(url);
-    }
+      !anchor ||
+      anchor.hasAttribute("x-navigate") ||
+      !canNavigate(event, anchor)
+    )
+      return;
+    event.preventDefault();
+    navigateTo(anchor.href);
   });
 
-  window.document.body.addEventListener("submit", (event) => {
-    if (window.FireLine.settings.interceptForms === false) return;
-    const formEl = event.target.closest("form");
+  document.addEventListener("submit", (event) => {
+    if (!window.FireLine.settings.interceptForms || event.defaultPrevented)
+      return;
+    const form = event.target.closest?.("form");
     if (
-      formEl &&
-      !formEl.hasAttribute("native") &&
-      !formEl.hasAttribute("x-form") &&
-      formEl.action.startsWith(window.location.origin)
-    ) {
-      event.preventDefault();
-      
-      // Attempt to extract form state if bound without x-form directive
-      const data = formEl._x_dataStack
-        ? Object.assign({}, ...formEl._x_dataStack.reverse())
-        : {};
-      const formState =
-        data.form && typeof data.form.reset === "function" ? data.form : null;
-
-      formSubmission(formEl, formState);
-    }
+      !form ||
+      form.hasAttribute("x-form") ||
+      form.hasAttribute("x-submit") ||
+      !canSubmit(form, event.submitter)
+    )
+      return;
+    event.preventDefault();
+    formSubmission(form, formStateFor(form), event.submitter);
   });
 };
