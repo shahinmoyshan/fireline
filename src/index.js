@@ -2,6 +2,8 @@ import { navigateTo, formSubmission } from "./page";
 import { safeReplaceHtml, canNavigate, canSubmit } from "./helpers";
 import { setAlpine } from "./dom";
 import { createForm } from "./form";
+import { createPartial } from "./partial";
+import { ajaxRequest } from "./fetch";
 import {
   showUnexpectedResponseModal,
   dismissUnexpectedResponseModal,
@@ -50,6 +52,7 @@ export default (Alpine) => {
 
   window.FireLine = FireLine;
   window.FireLine.form = createForm;
+  window.FireLine.partial = createPartial;
   window.FireLine.modal = {
     show: showUnexpectedResponseModal,
     dismiss: dismissUnexpectedResponseModal,
@@ -58,6 +61,7 @@ export default (Alpine) => {
   Alpine.fire = FireLine.context;
   Alpine.magic("fire", () => FireLine.context);
   Alpine.magic("form", () => createForm);
+  Alpine.magic("partial", () => createPartial);
 
   Alpine.directive("navigate", (el, { expression }, { evaluate, cleanup }) => {
     const onClick = (event) => {
@@ -68,6 +72,41 @@ export default (Alpine) => {
     };
     el.addEventListener("click", onClick);
     cleanup(() => el.removeEventListener("click", onClick));
+  });
+
+  Alpine.directive("preload", (el, { modifiers }, { cleanup }) => {
+    const url = el.getAttribute("href");
+    if (!url) return;
+
+    const doPreload = () =>
+      ajaxRequest(url, "GET", null, null, { silent: true, preload: true });
+
+    if (modifiers.includes("mouseover") || modifiers.includes("hover")) {
+      const onEnter = () => doPreload();
+      el.addEventListener("mouseenter", onEnter, { once: true });
+      cleanup(() => el.removeEventListener("mouseenter", onEnter));
+    } else {
+      doPreload();
+    }
+  });
+
+  Alpine.directive("poll", (el, { expression }, { cleanup }) => {
+    const ms = expression ? parseInt(expression, 10) : 5000;
+    const timer = setInterval(() => {
+      if (el.isConnected) {
+        navigateTo(window.location.href, false);
+      } else {
+        clearInterval(timer);
+      }
+    }, ms);
+    cleanup(() => clearInterval(timer));
+  });
+
+  Alpine.directive("partial", (el, { expression }, { evaluate }) => {
+    const partialState = expression ? evaluate(expression) : null;
+    if (partialState && typeof partialState.setTarget === "function") {
+      partialState.setTarget(el);
+    }
   });
 
   const formStateFor = (el) => {

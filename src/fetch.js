@@ -4,6 +4,7 @@ import { showUnexpectedResponseModal } from "./modal";
 
 let currentGetRequestController = null;
 let activeRequests = 0;
+const preloadCache = new Map();
 
 // consume keeps loading/fireEnd scoped to response handling as well as transport.
 export async function ajaxRequest(
@@ -11,50 +12,76 @@ export async function ajaxRequest(
   method = "GET",
   body = null,
   consume = null,
+  options = {},
 ) {
   method = method.toUpperCase();
   const isGet = method === "GET";
+  const { silent = false, preload = false } = options;
   const settings = window.FireLine.settings;
-  if (isGet && settings.abortOnNewRequest) currentGetRequestController?.abort();
+  const url = httpUrl(path);
+
+  if (isGet && !preload) {
+    const cached = preloadCache.get(url.href);
+    if (cached && cached.expires > Date.now()) {
+      preloadCache.delete(url.href);
+      if (consume) await consume(cached.envelope);
+      return cached.envelope;
+    }
+    preloadCache.delete(url.href);
+  }
+
+  if (isGet && !preload && settings.abortOnNewRequest)
+    currentGetRequestController?.abort();
   const controller = new AbortController();
-  if (isGet) currentGetRequestController = controller;
+  if (isGet && !preload) currentGetRequestController = controller;
   let timer;
   let timedOut = false;
-  activeRequests++;
-  window.FireLine.context.loading = true;
-  emit("start", { url: String(path), method });
+
+  if (!silent) {
+    activeRequests++;
+    window.FireLine.context.loading = true;
+    emit("start", { url: url.href, method });
+  }
+
   try {
-    const url = httpUrl(path);
     if (url.origin !== location.origin)
       throw new Error("FireLine AJAX requests must be same-origin.");
     const headers = new Headers(settings.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
     headers.set("X-Requested-With", "XMLHttpRequest");
     headers.set("X-FireLine", "1");
+    if (preload) headers.set("X-FireLine-Preload", "1");
     if (settings.csrfToken) headers.set("X-CSRF-TOKEN", settings.csrfToken);
-    const options = {
+
+    const fetchOptions = {
       method,
       headers,
       signal: controller.signal,
       credentials: "same-origin",
       mode: "same-origin",
     };
+
     if (body !== null && method !== "GET" && method !== "HEAD")
-      options.body = body;
+      fetchOptions.body = body;
+
     if (settings.timeout > 0)
       timer = setTimeout(() => {
         timedOut = true;
         controller.abort();
       }, settings.timeout * 1000);
-    const response = await fetch(url.href, options);
+
+    const response = await fetch(url.href, fetchOptions);
     const envelope = await parseResponse(response);
     clearTimeout(timer);
+
     if (controller.signal.aborted) {
       if (timedOut) throw new Error("FireLine request timed out.");
       return null;
     }
+
     envelope.url = response.url || url.href;
     envelope.redirected = response.redirected;
+
     const handler =
       response.status === 401
         ? settings.onUnauthenticated
@@ -63,11 +90,13 @@ export async function ajaxRequest(
           : response.status >= 500
             ? settings.onServerError
             : null;
+
     if (typeof handler === "function") await handler(response, envelope);
     if (controller.signal.aborted) return null;
+
     if (envelope.type === ResponseType.UNEXPECTED) {
-      emit("unexpected", { response, envelope });
-      if (typeof handler !== "function") {
+      if (!silent) emit("unexpected", { response, envelope });
+      if (typeof handler !== "function" && !silent) {
         if (typeof settings.onUnexpectedResponse === "function") {
           await settings.onUnexpectedResponse(
             response.status,
@@ -78,10 +107,20 @@ export async function ajaxRequest(
         }
       }
     } else if (envelope.type === ResponseType.VALIDATION) {
-      emit("validation", { envelope });
+      if (!silent) emit("validation", { envelope });
     }
+
     if (controller.signal.aborted) return null;
-    if (consume) await consume(envelope);
+
+    if (preload && isGet && envelope.type === ResponseType.RENDER) {
+      preloadCache.set(url.href, {
+        envelope,
+        expires: Date.now() + 1000 * (settings.preloadCacheTime || 30),
+      });
+    } else if (consume) {
+      await consume(envelope);
+    }
+
     return envelope;
   } catch (error) {
     if (timedOut) triggerError(new Error("FireLine request timed out."));
@@ -91,12 +130,14 @@ export async function ajaxRequest(
     clearTimeout(timer);
     if (currentGetRequestController === controller)
       currentGetRequestController = null;
-    activeRequests--;
-    window.FireLine.context.loading = activeRequests > 0;
-    emit("end", {
-      url: String(path),
-      method,
-      aborted: controller.signal.aborted,
-    });
+    if (!silent) {
+      activeRequests--;
+      window.FireLine.context.loading = activeRequests > 0;
+      emit("end", {
+        url: url.href,
+        method,
+        aborted: controller.signal.aborted,
+      });
+    }
   }
 }

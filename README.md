@@ -61,6 +61,29 @@ An intercepted request to `/about` must return `Content-Type: application/json`:
 <a x-navigate="menuOpen = false" href="/settings">Settings</a>
 ```
 
+### Preloading and Polling (New in v2)
+FireLine supports declarative preloading and polling without extra JS:
+
+- **`x-preload`**: Prefetches the page in the background silently.
+  - `<a href="/heavy" x-navigate x-preload>` (Immediate fetch)
+  - `<a href="/heavy" x-navigate x-preload.mouseover>` (Fetches when mouse hovers)
+- **`x-poll`**: Automatically reloads the current page at an interval while the element is in the DOM.
+  - `<div x-poll="10000"></div>` (Refreshes every 10 seconds. Default is 5000ms).
+
+### Partial Loading (`$partial` & `x-partial`)
+Load isolated HTML fragments without triggering the global loading bar or changing the page URL. Partials use `diffAndPatch` (via `replaceHtml`) to intelligently merge the new HTML into your existing DOM.
+
+```html
+<div x-data="{ comments: $partial('/api/comments/1') }" x-partial="comments" x-init="comments.load()">
+    <span x-show="comments.loading">Loading...</span>
+
+    <!-- The server HTML response replaces the container entirely, merging state -->
+    
+    <button @click="comments.loadMore('/api/comments/2')">Load More</button>
+    <button @click="comments.startInterval(10000)">Live Updates</button>
+</div>
+```
+
 `x-navigate` handles ordinary same-origin HTTP(S) clicks. Modified clicks, downloads, other browsing targets, `native` links, non-HTTP links and same-page hash links keep browser behavior. Global interception is opt-in:
 
 ```js
