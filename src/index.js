@@ -4,6 +4,7 @@ import { setAlpine } from "./dom";
 import { createForm } from "./form";
 import { createPartial } from "./partial";
 import { ajaxRequest } from "./fetch";
+import { trackScroll, scrollPosition } from "./history";
 import {
   showUnexpectedResponseModal,
   dismissUnexpectedResponseModal,
@@ -14,7 +15,7 @@ export default (Alpine) => {
   setAlpine(Alpine);
 
   const FireLine = Alpine.reactive({
-    version: "2.0.0",
+    version: "2.1.0",
     name: "fireline",
     events: {
       start: new Event("fireStart"),
@@ -38,12 +39,20 @@ export default (Alpine) => {
       onUnexpectedResponse: null,
       showUnexpectedModal: true,
       executeScripts: true,
+      preloadCacheTime: 30,
+      preloadCacheSize: 50,
+      viewTransitions: false,
+      progressBar: false,
+      progressColor: "#29d",
+      assetVersion: null,
+      focusOnError: false,
     },
     context: {
       current: window.location.href,
       loading: false,
       navigate: (url) => navigateTo(url),
-      reload: () => navigateTo(window.location.href, false),
+      reload: () =>
+        navigateTo(window.location.href, false, 0, { cache: false }),
       replaceHtml: (html) => safeReplaceHtml(html),
       formSubmit: (formEl, formState = null, submitter = null) =>
         formSubmission(formEl, formState, submitter),
@@ -63,69 +72,86 @@ export default (Alpine) => {
   Alpine.magic("form", () => createForm);
   Alpine.magic("partial", () => createPartial);
 
-  Alpine.directive("navigate", (el, { expression, modifiers }, { evaluate, cleanup }) => {
-    const onClick = (event) => {
-      if (!canNavigate(event, el)) return;
-      event.preventDefault();
-      if (expression) evaluate(expression);
-      navigateTo(el.href);
-    };
-    el.addEventListener("click", onClick);
-    cleanup(() => el.removeEventListener("click", onClick));
-    
-    if (modifiers.includes("hover") || modifiers.includes("mouseover")) {
-        const url = el.getAttribute("href");
-        if (url) {
-            const onEnter = () => ajaxRequest(url, "GET", null, null, { silent: true, preload: true });
-            el.addEventListener("mouseenter", onEnter, { once: true });
-            cleanup(() => el.removeEventListener("mouseenter", onEnter));
-        }
-    }
-  });
+  Alpine.directive(
+    "navigate",
+    (el, { expression, modifiers }, { evaluate, cleanup }) => {
+      const onClick = (event) => {
+        if (!canNavigate(event, el)) return;
+        event.preventDefault();
+        if (expression) evaluate(expression);
+        navigateTo(el.href);
+      };
+      el.addEventListener("click", onClick);
+      cleanup(() => el.removeEventListener("click", onClick));
 
+      if (modifiers.includes("hover") || modifiers.includes("mouseover")) {
+        const onEnter = () => preload(el);
+        el.addEventListener("mouseenter", onEnter);
+        cleanup(() => el.removeEventListener("mouseenter", onEnter));
+      }
+    },
+  );
+
+  const preload = (el) => {
+    if (canNavigate({ button: 0 }, el))
+      return ajaxRequest(el.href, "GET", null, null, { preload: true });
+  };
   Alpine.directive("preload", (el, { modifiers }, { cleanup }) => {
-    const url = el.getAttribute("href");
-    if (!url) return;
-
-    const doPreload = () =>
-      ajaxRequest(url, "GET", null, null, { silent: true, preload: true });
-
     if (modifiers.includes("mouseover") || modifiers.includes("hover")) {
-      const onEnter = () => doPreload();
-      el.addEventListener("mouseenter", onEnter, { once: true });
+      const onEnter = () => preload(el);
+      el.addEventListener("mouseenter", onEnter);
       cleanup(() => el.removeEventListener("mouseenter", onEnter));
-    } else {
-      doPreload();
-    }
+    } else preload(el);
   });
 
   Alpine.directive("poll", (el, { expression }, { cleanup }) => {
-    const ms = expression ? parseInt(expression, 10) : 5000;
-    const timer = setInterval(() => {
-      if (el.isConnected) {
-        navigateTo(window.location.href, false);
-      } else {
-        clearInterval(timer);
-      }
-    }, ms);
-    cleanup(() => clearInterval(timer));
+    const ms = expression ? Number(expression) : 5000;
+    if (!Number.isFinite(ms) || ms <= 0 || ms > 2147483647) return;
+    let stopped = false,
+      timer;
+    const poll = async () => {
+      if (stopped || !el.isConnected) return;
+      if (
+        !document.hidden &&
+        navigator.onLine !== false &&
+        !FireLine.context.loading
+      )
+        await navigateTo(window.location.href, false, 0, { cache: false });
+      if (!stopped && el.isConnected) timer = setTimeout(poll, ms);
+    };
+    timer = setTimeout(poll, ms);
+    cleanup(() => {
+      stopped = true;
+      clearTimeout(timer);
+    });
   });
 
-  Alpine.directive("partial", (el, { expression, modifiers }, { evaluate }) => {
-    const partialState = expression ? evaluate(expression) : null;
-    if (partialState && typeof partialState.setTarget === "function") {
-      partialState.setTarget(el);
+  Alpine.directive(
+    "partial",
+    (el, { expression, modifiers }, { evaluate, cleanup }) => {
+      const state = expression ? evaluate(expression) : null;
+      if (!state || typeof state.setTarget !== "function") return;
+      state.setTarget(el);
+      let observer;
+      cleanup(() => {
+        observer?.disconnect();
+        state.dispose();
+      });
       if (modifiers.includes("lazy") || modifiers.includes("intersect")) {
-          const observer = new IntersectionObserver(entries => {
-              if (entries[0].isIntersecting) {
-                  partialState.load();
-                  observer.disconnect();
-              }
-          });
-          observer.observe(el);
+        if (typeof IntersectionObserver !== "function") {
+          state.load();
+          return;
+        }
+        observer = new IntersectionObserver((entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            observer.disconnect();
+            if (el.isConnected) state.load();
+          }
+        });
+        observer.observe(el);
       }
-    }
-  });
+    },
+  );
 
   const formStateFor = (el) => {
     const form = Alpine.$data(el).form;
@@ -150,15 +176,13 @@ export default (Alpine) => {
   registerForm("form");
   registerForm("submit", true);
 
+  trackScroll();
   window.addEventListener("popstate", (event) =>
-    navigateTo(window.location.href, false).then(() => {
-        if (event.state && event.state.scroll) {
-            window.scrollTo(event.state.scroll.x, event.state.scroll.y);
-        } else if (window.location.hash) {
-            const hashEl = document.getElementById(window.location.hash.substring(1));
-            if (hashEl) hashEl.scrollIntoView();
-        }
-    })
+    navigateTo(window.location.href, false, 0, {
+      cache: false,
+      scroll: scrollPosition(event.state),
+      restoreScroll: true,
+    }),
   );
   window.addEventListener(
     "pageshow",

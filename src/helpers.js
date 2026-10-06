@@ -19,10 +19,10 @@ export async function safeReplaceHtml(html) {
   }
 }
 
-export function replaceRouterHtml(html, baseUrl) {
+export function replaceRouterHtml(html, baseUrl, current) {
   const targetEl = document.querySelector(window.FireLine.settings.targetEl);
   if (!targetEl) throw new Error("Router target element not found.");
-  return replaceHtml(targetEl, html, baseUrl);
+  return replaceHtml(targetEl, html, baseUrl, current);
 }
 
 export function httpUrl(value) {

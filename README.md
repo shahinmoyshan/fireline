@@ -1,4 +1,4 @@
-# FireLine 2
+# FireLine 2.1
 
 FireLine is an Alpine.js plugin for navigation and form submissions over server-rendered HTML. Your backend returns JSON envelopes; FireLine patches a page fragment while retaining matching Alpine components.
 
@@ -27,7 +27,7 @@ Alpine.start();
 Assigning `window.Alpine` is optional with the module build. For CDN use, load FireLine before Alpine:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/npm/fireline@2/dist/cdn.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/fireline@2.1.0/dist/cdn.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.0/dist/cdn.min.js"></script>
 ```
 
@@ -61,42 +61,60 @@ An intercepted request to `/about` must return `Content-Type: application/json`:
 <a x-navigate="menuOpen = false" href="/settings">Settings</a>
 ```
 
-### Preloading and Polling
-FireLine supports declarative preloading and polling without extra JS:
-
-- **`x-preload`**: Prefetches the page in the background silently.
-  - `<a href="/heavy" x-navigate x-preload>` (Immediate fetch)
-  - `<a href="/heavy" x-navigate x-preload.mouseover>` (Fetches when mouse hovers)
-  - `<a href="/heavy" x-navigate.hover>` (Shorthand to navigate and fetch on hover)
-- **`x-poll`**: Automatically reloads the current page at an interval while the element is in the DOM.
-  - `<div x-poll="10000"></div>` (Refreshes every 10 seconds. Default is 5000ms).
-
-### Partial Loading (`$partial` & `x-partial`)
-Load isolated HTML fragments without triggering the global loading bar or changing the page URL. Partials use `diffAndPatch` (via `replaceHtml`) to intelligently merge the new HTML into your existing DOM.
+### Preloading and polling
 
 ```html
-<div x-data="{ comments: $partial('/api/comments/1') }" x-partial="comments" x-init="comments.load()">
-    <span x-show="comments.loading">Loading...</span>
+<a href="/posts" x-navigate x-preload>Preload on mount</a>
+<a href="/posts" x-navigate x-preload.hover>Preload on hover</a>
+<a href="/posts" x-navigate.hover>Navigate and preload on hover</a>
+<div x-poll="10000"></div>
+```
 
-    <!-- The server HTML response replaces the container entirely, merging state -->
-    
-    <button @click="comments.loadMore('/api/comments/2')">Load More</button>
+`.mouseover` is an alias for `.hover`. Preloading uses same-origin GET requests with `X-FireLine-Preload: 1`. Native links, downloads, external destinations and same-page anchors are ignored. Hover reads the current `href` and can retry after expiry. Duplicate in-flight preloads share transport; a navigation never waits for an unfinished preload.
+
+Successful render envelopes are cached for `preloadCacheTime` seconds (default 30), up to `preloadCacheSize` entries (default 50, oldest evicted first). Either setting at `0` disables cache reuse. A completed preload is consumed once by navigation, including its normal loading/events lifecycle. Cache keys include the URL without its fragment, request headers and configured asset version. Partials bypass this cache; reload, polling and back/forward navigation always fetch. FireLine writes invalidate the cache before and after transport/response handling, and older speculative requests cannot repopulate it.
+
+**A preload must return the same complete page as an ordinary FireLine navigation.** Do not omit required queries or markup based on the preload header. Only preload safe GET routes; use the header to omit analytics or similar optional work. Failures stay silent and do not invoke status callbacks, error events, modals or asset reloads. Browser/proxy caching is separate from this short-lived application cache.
+
+`x-poll="10000"` refreshes the current page after each 10-second interval; the default is 5000 milliseconds. The value must be a positive finite number no greater than 2147483647; invalid values disable the directive. Polling pauses while the document is hidden, the browser reports offline, or a foreground request is active. It does not overlap its own requests and stops when its element is removed.
+
+### Partial loading
+
+`$partial(url, initialData = {})` creates state for a fragment request. Mount it with `x-partial="state"`; `FireLine.partial()` is the JavaScript equivalent. Keep controls and loading indicators outside the partial host:
+
+```html
+<div x-data="{ comments: $partial('/comments?page=1') }">
+    <span x-show="comments.loading">Loading...</span>
+    <p x-text="comments.error"></p>
+    <section x-partial="comments" x-init="comments.load()"></section>
+    <button :disabled="comments.loading"
+            @click="comments.loadMore('/comments?page=2')">Load more</button>
 </div>
 ```
 
-You can natively lazy-load partials when they scroll into view using `.lazy` or `.intersect`:
-```html
-<!-- Automatically calls comments.load() when scrolled into view -->
-<div x-data="{ comments: $partial('/comments') }" x-partial.lazy="comments">...</div>
-```
+The server returns JSON, for example `{"html":"<article key=\"comment-1\">Hello</article>"}`. It must not return raw HTML or a full document. Partial HTML may contain multiple roots or be empty. The **host stays mounted; `load()` reconciles its contents** using the same keyed patcher as page navigation. `load(true)` appends instead. Keep the host free of competing `x-html`, `x-text` and `x-ignore` directives. Mount one state object per host.
 
-### Advanced UI / UX (v2.1 Features)
-FireLine includes built-in configurations to rival heavy SPA frameworks:
-- **View Transitions API:** Set `FireLine.settings.viewTransitions = true` to get native slide/fade page transitions across navigations automatically.
-- **Progress Bar:** A top-edge loading progress bar is automatically enabled via `FireLine.settings.progressBar = true` and `FireLine.settings.progressColor = '#29d'`.
-- **Scroll Restoration:** Native scroll restoration and URL hash jumping (`/page#section`) are fully supported on `popstate` back/forward navigation.
-- **Asset Versioning:** Set `FireLine.settings.assetVersion = 'v2.1'` in JS. If the server sends an `X-FireLine-Asset-Version` header that mismatches, FireLine will force a hard page reload to seamlessly update CSS/JS without breaking the app.
-- **Persistent DOM (`x-ignore`):** Place `x-ignore` on any element (like an audio player) and FireLine will never overwrite or morph it during page navigations.
+| Partial API | Behavior |
+| --- | --- |
+| `url` | Current endpoint; changing it discards an older in-flight result |
+| `loading`, `error` | Local processing flag and error message (or `null`) |
+| `await load(append = false)` | Fetch and patch/append; duplicate loads are ignored |
+| `await loadMore(nextUrl)` | Append from the next URL; retain the previous URL on failure |
+| `startInterval(ms = 5000)` | Poll after each completed load; requires positive finite milliseconds up to 2147483647 |
+| `stopInterval()` | Stop polling |
+| `dispose()` | Stop polling and abort the current request; called automatically on host removal |
+
+Partials send `X-FireLine-Partial: 1`, run independently of navigation, and do not change history, title, global loading or request events. Transport, timeout, invalid HTML and non-render envelope failures set `error`. Configured HTTP status callbacks still apply. Redirect/navigation envelopes are not followed by a partial. Fragment scripts obey `executeScripts`, including append mode. Methods resolve to the envelope on success or `null` on failure/cancellation/ignored loads. State becomes reactive through Alpine `x-data`.
+
+Use `x-partial.lazy="comments"` (alias `.intersect`) to load once when visible. Without IntersectionObserver support it loads immediately. Removal disconnects the observer, aborts pending work and stops polling. Partial intervals pause while hidden or offline.
+
+### Navigation effects and deployment versions
+
+- Set `viewTransitions = true` to wrap page replacement in the browser's View Transitions API. Unsupported browsers patch normally. Styling transitions is your application's responsibility; FireLine does not supply a slide animation. Navigation waits for the DOM update, not the animation's end.
+- Set `progressBar = true` and optionally `progressColor = '#29d'` for a top-edge indicator covering foreground requests and response handling.
+- FireLine saves scroll coordinates in `history.state.scroll` while preserving other state fields, restores them on back/forward, and decodes hash IDs when jumping to a new page's anchor. Scroll-event history writes are coalesced; the latest 100 entry positions stay in memory for immediate traversal. `history.state.__fireline` is reserved for entry identity. It sets `history.scrollRestoration = 'manual'`; avoid installing a second scroll manager.
+- Set `assetVersion` from the build identifier embedded in the initial HTML. When a successful render's `X-FireLine-Asset-Version` differs, navigation makes a full request to the destination; partials and non-redirected write renders reload the current document. A preload merely retains the version for checking on use. Keep the initial HTML version and server header consistent across deployments.
+- Set `focusOnError = true` to focus the first available invalid form control after Alpine updates. Literal names and PHP-style bracket names mapped from dotted error paths are supported; hidden and disabled controls are skipped.
 
 `x-navigate` handles ordinary same-origin HTTP(S) clicks. Modified clicks, downloads, other browsing targets, `native` links, non-HTTP links and same-page hash links keep browser behavior. Global interception is opt-in:
 
@@ -112,7 +130,7 @@ Inside Alpine, use `$fire`; outside, use `Alpine.fire` or `FireLine.context`:
 | API | Behavior |
 | --- | --- |
 | `$fire.current` | Current absolute page URL |
-| `$fire.loading` | True while any FireLine request or its response handling is active |
+| `$fire.loading` | True while any foreground request or its response handling is active |
 | `await $fire.navigate(url)` | Fetch, render and update history; external HTTP(S) URLs use full navigation |
 | `await $fire.reload()` | Refetch the current page without adding a history entry |
 | `await $fire.replaceHtml(html)` | Patch the target without fetching or changing history |
@@ -120,7 +138,7 @@ Inside Alpine, use `$fire`; outside, use `Alpine.fire` or `FireLine.context`:
 
 Request methods resolve to the parsed envelope, or `null` on transport/render failure or cancellation. `replaceHtml` resolves to the resulting element or `null` on failure. Errors emit `fireError`. Back/forward navigation refetches the page; restoring a page from the browser's back/forward cache reloads it. History and title are updated only after a successful render. Use JSON `navigate`/`redirect` envelopes for predictable action redirects; same-origin HTTP redirects ending in a render also use the final response URL.
 
-New GET requests cancel the preceding active GET by default. Writes are not canceled by this setting. A submission from a page you have since left can finish on the server, but its result will not replace the newer page. Independently, a superseded navigation cannot commit an older response over the newer navigation. JSON navigation chains are limited to 10 redirects.
+New foreground GET requests cancel the preceding foreground GET by default. Preloads and partials do not participate in this cancellation. Writes are not canceled by this setting. A submission from a page you have since left can finish on the server, but its result will not replace the newer page. Independently, a superseded navigation cannot commit an older response over the newer navigation. JSON navigation chains are limited to 10 redirects.
 
 ## Reactive forms
 
@@ -170,7 +188,7 @@ An optional expression runs before submission. Success/error messages are writte
 
 ## JSON response protocol
 
-All requests include `Accept: application/json`, `X-Requested-With: XMLHttpRequest`, and `X-FireLine: 1`. Cookies use same-origin credentials. AJAX requests are restricted to the current origin. A configured CSRF token is sent as `X-CSRF-TOKEN`; hidden form fields are included only when your markup provides them.
+Requests default to `Accept: application/json` (customizable with `headers`), and include `X-Requested-With: XMLHttpRequest`, and `X-FireLine: 1`. Cookies use same-origin credentials. AJAX requests are restricted to the current origin. A configured CSRF token is sent as `X-CSRF-TOKEN`; hidden form fields are included only when your markup provides them.
 
 | Response | HTTP status | JSON body |
 | --- | --- | --- |
@@ -201,13 +219,13 @@ Use unique, stable keys for reorderable server-rendered lists. `key` is separate
 
 Sibling matching uses maps and cursors rather than repeated list scans. Text, comments, namespaces, attributes and unbound form properties are reconciled. File-input values are not assigned. Bound values and `x-model` remain client-owned. `@click` and `:class` shorthand are supported.
 
-Unchanged directives retain their existing state. A changed/added/removed directive (including `x-data`) replaces and reinitializes that element. Changing a component's `key` also resets it. `x-cloak` is not reintroduced on initialized elements. `x-ignore` preserves its subtree; `x-text` and `x-html` own their children. Structural `x-if`/`x-for` templates retain their generated siblings; changing template content recreates those instances. Teleported content is left to Alpine and cleaned up with its template. Third-party DOM widgets should live inside `x-ignore` with appropriate component cleanup.
+Unchanged directives retain their existing state. A changed/added/removed directive (including `x-data`) replaces and reinitializes that element. Changing a component's `key` also resets it. `x-cloak` is not reintroduced on initialized elements. `x-ignore` preserves a matched subtree; it does not keep the element alive when its parent or keyed position is removed; `x-text` and `x-html` own their children. Structural `x-if`/`x-for` templates retain their generated siblings; changing template content recreates those instances. Teleported content is left to Alpine and cleaned up with its template. Third-party DOM widgets should live inside `x-ignore` with appropriate component cleanup.
 
 ### Fragment scripts
 
 With `executeScripts: true`, scripts from the incoming fragment run after the DOM patch. Classic inline scripts run immediately; external scripts are loaded sequentially and awaited. Inline modules use native asynchronous module scheduling and are not awaited by `fireEnd`; use an external module when completion ordering matters. Non-JavaScript data scripts are not executed. Script attributes such as nonce, integrity and crossorigin are copied. External `src` URLs resolve against the response URL for navigations, or the current document base for direct replacement.
 
-Keep Alpine and shared application bundles in the initial layout, outside the replaced fragment. Classic fragment scripts run on each render; external module evaluation follows the browser's module cache. Normal CSP rules apply. External load failures/timeouts emit `fireError`, but cannot roll back an already patched DOM or scripts already executed. Runtime exceptions in scripts use the browser's error reporting. Disabling `executeScripts` disables this explicit script execution; it does not sanitize HTML or Alpine expressions.
+Keep Alpine and shared application bundles in the initial layout, outside the replaced fragment. Classic fragment scripts run on each render; external module evaluation follows the browser's module cache. Normal CSP rules apply. External load failures/timeouts emit `fireError`, but cannot roll back an already patched DOM or scripts already executed. Runtime exceptions in scripts use the browser's error reporting. Executable scripts are excluded from the live fragment and executed through this explicit path, once per render. Scripts inside structural template contents are not executed by FireLine. Disabling `executeScripts` disables fragment script execution; it does not sanitize HTML or Alpine expressions.
 
 ## Settings
 
@@ -219,22 +237,24 @@ Change individual fields or use `Object.assign(FireLine.settings, {...})` to ret
 | `timeout` | `30` | Seconds through response-body reading, and per external script load; `0` disables timeout |
 | `interceptLinks` | `false` | Automatically handle eligible anchors |
 | `interceptForms` | `false` | Automatically handle eligible forms |
-| `abortOnNewRequest` | `true` | Abort the previous active GET |
+| `abortOnNewRequest` | `true` | Abort the previous foreground GET |
+| `preloadCacheTime` | `30` | Cached preload lifetime in seconds; `0` disables reuse |
+| `preloadCacheSize` | `50` | Maximum cached envelopes; `0` disables reuse |
 | `csrfToken` | `null` | Token for `X-CSRF-TOKEN` |
 | `headers` | `{}` | Additional Fetch headers; FireLine identification headers are enforced |
 | `executeScripts` | `true` | Execute scripts in trusted fragments |
 | `showUnexpectedModal` | `true` | Display unexpected responses in a sandboxed iframe |
-| `viewTransitions` | `false` | Use `document.startViewTransition()` on replaces |
+| `viewTransitions` | `false` | Use `document.startViewTransition()` on page replacement |
 | `progressBar` | `false` | Show built-in top-edge loading bar |
 | `progressColor` | `'#29d'` | Color for the top-edge progress bar |
 | `assetVersion` | `null` | Hard-reload on mismatch with `X-FireLine-Asset-Version` header |
-| `focusOnError` | `false` | Focus the first input field upon validation failure |
+| `focusOnError` | `false` | Focus an available invalid control after reactive updates |
 | `onUnauthenticated` | `null` | `(response, envelope) => {}` for HTTP 401 |
 | `onForbidden` | `null` | `(response, envelope) => {}` for HTTP 403 |
 | `onServerError` | `null` | `(response, envelope) => {}` for HTTP 5xx |
 | `onUnexpectedResponse` | `null` | `(status, body) => {}` instead of the fallback modal |
 
-Status callbacks run for both JSON and non-JSON errors and may be asynchronous. The response body has already been consumed; inspect `envelope.raw` or `envelope.rawHtml`. For unexpected responses, a matching status callback takes precedence over the generic callback/modal. Recognized JSON errors are still returned to form handling after the callback.
+Except during preloading, status callbacks run for both JSON and non-JSON errors and may be asynchronous. The response body has already been consumed; inspect `envelope.raw` or `envelope.rawHtml`. For unexpected responses, a matching status callback takes precedence over the generic callback/modal. Recognized JSON errors are still returned to form handling after the callback.
 
 Disable the debug modal in production if desired. `FireLine.modal.show(status, body)` and `.dismiss()` control it manually. Response scripts cannot run in its sandbox.
 
@@ -251,7 +271,7 @@ Listen on `document`. Each dispatch is a fresh `CustomEvent`:
 | `fireValidation` | Parsed 422 validation response; `{envelope}` |
 | `fireUnexpected` | Unrecognized response; `{response, envelope}` |
 
-`fireEnd` is not a success signal. With overlapping requests, `$fire.loading` remains true until all requests finish. Expected cancellation does not emit `fireError`; timeouts do. JSON application errors are handled as envelopes and do not emit `fireError` automatically.
+`fireEnd` is not a success signal. With overlapping foreground requests, `$fire.loading` remains true until all finish. Preloads and partials do not emit these request events; partial failures are available in their local `error` state. Expected cancellation does not emit `fireError`; timeouts do. JSON application errors are handled as envelopes and do not emit `fireError` automatically.
 
 ## TinyMVC / Spark
 
@@ -267,6 +287,12 @@ Install `tinymvc/fireline-php` and register its provider and middleware. See the
 - Await navigation/submission methods when sequencing work. `fireEnd` also fires on errors and cancellation.
 - Give stateful, reorderable elements stable `key` attributes. Changed directives intentionally reset their element.
 
+## Upgrading the v2.1 preview
+
+See [the changelog](CHANGELOG.md) for the release fixes.
+
+The new partial API now retains its host and reconciles the host's children. If you used the early preview's outer-element replacement, return the content to place **inside** the host and move persistent controls outside it. Preloads no longer cancel navigation or run authentication/error callbacks. Invalid polling intervals are disabled, and partial polling rejects them explicitly.
+
 ## Development and release checks
 
 ```sh
@@ -280,4 +306,8 @@ npm pack --dry-run
 
 For the real PHP adapter test, install Composer dependencies in the sibling `fireline-php` checkout, then run `npm run test:integration`. To use an installed Chrome instead of Playwright Chromium: `FIRELINE_BROWSER_CHANNEL=chrome npm run test:integration`.
 
-The suite includes randomized keyed reconciliation, real Alpine state/lifecycle tests, request races, form validation and a browser benchmark. Browser timings depend on hardware and DOM complexity; no test suite establishes correctness for every possible DOM or third-party plugin. `prepack` rebuilds the CDN and ES module artifacts. Publishing is a separate maintainer action.
+The suite includes randomized keyed and mixed-tree reconciliation, real Alpine lifecycle tests, cache/request races, partial cleanup, transition failures, form validation, progress timing, browser scroll/asset-version checks and a keyed-reversal benchmark. To run another installed Playwright engine, set `FIRELINE_BROWSER=firefox` or `FIRELINE_BROWSER=webkit` (omit `FIRELINE_BROWSER_CHANNEL`). Browser timings depend on hardware and DOM complexity; no test suite establishes correctness for every possible DOM or third-party plugin. `prepack` rebuilds the CDN and ES module artifacts. Publishing is a separate maintainer action.
+
+### Browser-runtime diagnostic
+
+The local Playwright WebKit 26.0 runtime (build 2215) crashed on a full document navigation after same-document back/forward traversal. This also reproduced in `tests/webkit-history-repro.cjs`, which loads neither FireLine nor Alpine. The integration suite isolates browser scenarios in separate pages so the remaining checks can run. To reproduce the runtime issue separately, install Playwright WebKit and run `node tests/webkit-history-repro.cjs`. This is a browser-runtime validation limitation, not evidence that every Safari release is affected.

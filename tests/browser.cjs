@@ -3,7 +3,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { chromium } = require('playwright');
+const browsers = require('playwright');
+const browserType = process.env.FIRELINE_BROWSER || 'chromium';
 const { buildSync } = require('esbuild');
 const domBundle = buildSync({ entryPoints: ['src/dom.js'], bundle: true, format: 'iife', globalName: 'DOM', write: false }).outputFiles[0].text;
 const alpine = fs.readFileSync('node_modules/alpinejs/dist/cdn.min.js');
@@ -18,6 +19,19 @@ const serve = http.createServer((req, res) => {
   else if (req.url === '/ordered.js') { res.setHeader('Content-Type', 'text/javascript'); setTimeout(() => res.end('window.order.push("external");'), 25); }
   else if (req.url === '/http-redirect') { res.writeHead(302, {Location:'/next'}); res.end(); }
   else if (req.url === '/next') { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({html:'<div><h1>Next</h1><a x-navigate href="/">Home</a></div>',title:'Next'})); }
+  else if (req.url.startsWith('/fragment')) {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({html:`<button x-data="{n: 0}" x-init="window.partialInits=(window.partialInits||0)+1" @click="n++" x-text="n"></button><script>window.partialScripts=(window.partialScripts||0)+1</script><svg><script>window.svgScripts=(window.svgScripts||0)+1</script></svg><p>${req.headers['x-fireline-partial'] || 'page'}</p>`}));
+  }
+  else if (req.url === '/scroll-a' || req.url === '/scroll-b') {
+    res.setHeader('Content-Type','application/json');
+    res.end(JSON.stringify({html:`<div><h1>${req.url}</h1><div style="height:2500px"></div><p id="hello world">Anchor</p></div>`}));
+  }
+  else if (req.url === '/versioned') {
+    res.setHeader('X-FireLine-Asset-Version','build-new');
+    if (req.headers['x-fireline']) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({html:'<div>New</div>'})); }
+    else res.end('<!doctype html><html><body><h1 id="fresh-assets">Fresh document</h1></body></html>');
+  }
   else if (req.headers['x-fireline']) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({html:'<div><h1>Home</h1></div>',title:'Home'})); }
   else res.end('<!doctype html><html><head><script defer src="/fireline.js"></script><script defer src="/alpine.js"></script></head><body><div id="app"><div x-data="{value: \'client\'}"><h1>Home</h1><a id="next" x-navigate href="/next">Next</a><input key="input" x-model="value"><p key="other">other</p></div></div></body></html>');
 });
@@ -26,8 +40,9 @@ const serve = http.createServer((req, res) => {
   try {
     await new Promise(resolve => serve.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${serve.address().port}`;
-    browser = await chromium.launch({ headless: true, ...(process.env.FIRELINE_BROWSER_CHANNEL ? {channel:process.env.FIRELINE_BROWSER_CHANNEL} : {}) });
-    const page = await browser.newPage();
+    browser = await browsers[browserType].launch({ headless: true, ...(process.env.FIRELINE_BROWSER_CHANNEL ? {channel:process.env.FIRELINE_BROWSER_CHANNEL} : {}) });
+    const context = await browser.newContext();
+    let page = await context.newPage();
     page.setDefaultTimeout(10000);
     const watchdog = setTimeout(() => { console.error('Browser test timed out'); process.exit(1); }, 60000);
     watchdog.unref();
@@ -74,6 +89,11 @@ const serve = http.createServer((req, res) => {
     await page.locator('#next').click(); await page.waitForURL('**/next');
     assert.equal(await page.locator('h1').textContent(),'Next');
     console.log('PASS built ES module works without window.Alpine');
+    await require('./v21-browser.cjs')(page, base);
+    await page.close();
+    page = await context.newPage();
+    page.setDefaultTimeout(10000);
+    page.on('pageerror', error => errors.push(error.message));
     // Measure keyed reversal and verify identity for every node.
 
     await page.goto(base); await page.waitForFunction(() => window.Alpine?.fire);
@@ -109,6 +129,17 @@ const serve = http.createServer((req, res) => {
       await page.locator('input[name=email]').fill('valid@example.test'); await page.locator('form button').click();
       await page.waitForFunction(()=>document.querySelector('#message')?.textContent==='Saved: save');
       await page.evaluate(()=>Alpine.fire.navigate('/navigate')); assert.equal(new URL(page.url()).pathname,'/next');
+      await page.evaluate(() => {
+        document.querySelector('#app > div').insertAdjacentHTML('beforeend', '<section id="partial" x-data="{p: $partial(\'/partial\')}" x-init="window.phpPartial=p" x-partial="p"></section>');
+      });
+      await page.waitForFunction(() => window.phpPartial);
+      await page.evaluate(() => phpPartial.load());
+      assert.equal(await page.locator('#partial p').textContent(), 'Partial via JSON');
+      assert.equal(await page.locator('#partial').getAttribute('x-partial'), 'p');
+      const preloadResponse = await page.request.get(phpBase + '/partial', {headers:{'X-FireLine':'1','X-FireLine-Preload':'1','X-FireLine-Partial':'1'}});
+      assert.equal(preloadResponse.headers()['x-fireline-asset-version'], 'fixture-2.1');
+      assert.match(preloadResponse.headers().vary, /X-FireLine-Partial/);
+      assert.equal((await preloadResponse.json()).html.trim(), '<p>Partial via JSON</p>');
       console.log('PASS real PHP adapter: initial layout, fragment navigation, preserved state, validation, submitter, success and JSON navigation');
     }
     assert.deepEqual(errors,[]);

@@ -152,6 +152,31 @@ function syncControl(oldNode, newNode) {
   }
 }
 
+// Inserting a cloned, top-level template script can execute it natively. Keep
+// executable scripts out of the live tree; injectScripts is their only executor.
+const scriptType = (type) =>
+  /^(?:|module|(?:application|text)\/(?:x-)?(?:java|ecma)script|text\/javascript1\.[0-5]|text\/(?:jscript|livescript))$/.test(
+    type.trim().toLowerCase(),
+  );
+
+const executableScript = (node) =>
+  isElement(node) &&
+  node.localName === "script" &&
+  scriptType(node.getAttribute("type") || "");
+
+function cloneForPatch(node) {
+  const clone = node.cloneNode(true);
+  const clean = (root) => {
+    for (const script of root.querySelectorAll?.("script") || [])
+      if (executableScript(script)) script.remove();
+    for (const template of root.querySelectorAll?.("template") || [])
+      clean(template.content);
+    if (root.content) clean(root.content);
+  };
+  clean(clone);
+  return clone;
+}
+
 function patch(parent, oldNode, newNode) {
   if (!newNode) {
     if (oldNode) {
@@ -177,7 +202,7 @@ function patch(parent, oldNode, newNode) {
     (isElement(oldNode) && directivesChanged(oldNode, newNode))
   ) {
     // Clone: incoming DOM stays intact so control defaults and scripts remain available.
-    const replacement = newNode.cloneNode(true);
+    const replacement = cloneForPatch(newNode);
     if (oldNode) {
       destroy(oldNode);
       parent.replaceChild(replacement, oldNode);
@@ -196,7 +221,7 @@ function patch(parent, oldNode, newNode) {
       // Existing structural templates are client-owned. A changed template must
       // be reinitialized so x-if/x-for clones reflect the new server markup.
       if (!oldNode.content.isEqualNode(newNode.content)) {
-        const replacement = newNode.cloneNode(true);
+        const replacement = cloneForPatch(newNode);
         destroy(oldNode);
         parent.replaceChild(replacement, oldNode);
         initialize(replacement);
@@ -233,6 +258,7 @@ function patchChildren(oldNode, newNode) {
   let unkeyedIndex = 0;
   let cursor = oldNode.firstChild;
   for (const incoming of newNode.childNodes) {
+    if (executableScript(incoming)) continue;
     const key = keyOf(incoming);
     const bucket = key === null ? null : keyed.get(key);
     const matching =
@@ -283,7 +309,12 @@ export function diffAndPatch(parent, oldNode, newNode) {
 }
 
 /** Requires exactly one element root; invalid responses leave the live DOM intact. */
-export async function replaceHtml(targetEl, html, baseUrl = document.baseURI) {
+export async function replaceHtml(
+  targetEl,
+  html,
+  baseUrl = document.baseURI,
+  current = () => true,
+) {
   if (typeof html !== "string")
     throw new TypeError("FireLine HTML must be a string.");
   const template = document.createElement("template");
@@ -295,7 +326,7 @@ export async function replaceHtml(targetEl, html, baseUrl = document.baseURI) {
   if (
     roots.length !== 1 ||
     !isElement(roots[0]) ||
-    roots[0].tagName === "SCRIPT"
+    roots[0].localName === "script"
   ) {
     throw new Error(
       "FireLine HTML must contain exactly one root element (not a full document).",
@@ -310,42 +341,96 @@ export async function replaceHtml(targetEl, html, baseUrl = document.baseURI) {
   if (!targetEl?.parentNode)
     throw new Error("Router target element is detached.");
   const newContent = roots[0];
-  const doReplace = () => diffAndPatch(targetEl.parentNode, targetEl, newContent);
   let live;
-  if (window.FireLine?.settings.viewTransitions && document.startViewTransition) {
-      await new Promise(resolve => {
-          const transition = document.startViewTransition(() => {
-              live = doReplace();
-              resolve();
-          });
-          // Ensure resolve is called if transition fails
-          transition.finished.catch(() => resolve());
-      });
-  } else {
-      live = doReplace();
-  }
-  
-  if (window.FireLine?.settings.executeScripts !== false) {
-    await injectScripts(newContent.querySelectorAll("script"), baseUrl);
-  }
+  const doReplace = () => {
+    if (!current()) return;
+    if (!targetEl.isConnected)
+      throw new Error("Router target element is detached.");
+    live = diffAndPatch(targetEl.parentNode, targetEl, newContent);
+  };
+  if (
+    window.FireLine?.settings.viewTransitions &&
+    typeof document.startViewTransition === "function"
+  ) {
+    const transition = document.startViewTransition(doReplace);
+    // A skipped animation can reject ready/finished even when its update succeeds.
+    transition.ready?.catch(() => {});
+    transition.finished.catch(() => {});
+    await transition.updateCallbackDone;
+  } else doReplace();
+  if (live && current() && window.FireLine?.settings.executeScripts !== false)
+    await injectScripts(
+      newContent.querySelectorAll("script"),
+      baseUrl,
+      current,
+    );
   return live;
 }
 
-/** Execute trusted fragment scripts after patching; await external scripts in order. */
-export async function injectScripts(scripts, baseUrl = document.baseURI) {
-  for (const source of scripts) {
-    const type = (source.type || "").trim().toLowerCase();
-    if (
-      type &&
-      !["module", "text/javascript", "application/javascript"].includes(type)
+/** Partials own the contents of a stable host; its Alpine scope stays mounted. */
+export async function replaceContents(
+  target,
+  html,
+  append = false,
+  baseUrl = document.baseURI,
+  current = () => true,
+) {
+  if (
+    typeof html !== "string" ||
+    /^(?:\s|<!--[\s\S]*?-->)*(?:<!doctype|<html[\s>]|<head[\s>]|<body[\s>])/i.test(
+      html,
     )
-      continue;
+  )
+    throw new Error("FireLine partial HTML must be a fragment.");
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  if (!current() || !target?.isConnected) return null;
+  if (append) {
+    let failure;
+    const run = () => {
+      try {
+        const nodes = Array.from(template.content.childNodes)
+          .filter((node) => !executableScript(node))
+          .map(cloneForPatch);
+        target.append(...nodes);
+        nodes.forEach(initialize);
+      } catch (error) {
+        failure = error;
+      }
+    };
+    if (alpine()?.mutateDom) alpine().mutateDom(run);
+    else run();
+    if (failure) throw failure;
+  } else {
+    const incoming = target.cloneNode(false);
+    incoming.append(template.content.cloneNode(true));
+    diffAndPatch(target.parentNode, target, incoming);
+  }
+  if (current() && window.FireLine?.settings.executeScripts !== false)
+    await injectScripts(
+      template.content.querySelectorAll("script"),
+      baseUrl,
+      current,
+    );
+  return target;
+}
+
+/** Execute trusted fragment scripts after patching; await external scripts in order. */
+export async function injectScripts(
+  scripts,
+  baseUrl = document.baseURI,
+  current = () => true,
+) {
+  for (const source of scripts) {
+    if (!current()) break;
+    const type = (source.getAttribute("type") || "").trim().toLowerCase();
+    if (!scriptType(type)) continue;
     const script = document.createElement("script");
     for (const attr of source.attributes)
       script.setAttributeNodeNS(attr.cloneNode());
     if (source.hasAttribute("src"))
       script.src = new URL(source.getAttribute("src"), baseUrl).href;
-    if (source.noModule && "noModule" in script) continue;
+    if (script.noModule && "noModule" in script) continue;
     script.textContent = source.textContent;
     script.async = false;
     if (source.hasAttribute("src")) {

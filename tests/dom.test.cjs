@@ -67,3 +67,24 @@ test('file inputs preserve selected files and SVG namespaced attributes update',
   assert.equal(w.document.querySelector('input'),input); assert.equal(input.value,'');
   assert.equal(w.document.querySelector('use').getAttributeNS('http://www.w3.org/1999/xlink','href'),'#new');
 });
+
+test('seeded mixed-tree reconciliation covers duplicates, changing tags, comments and nested children', () => {
+  const {window:w}=setup('<div></div>');
+  let seed=754381;
+  const random=n=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)%n);
+  const tree=depth=>Array.from({length:random(10)},()=>{
+    const kind=random(5);
+    if(kind===0)return `<!--comment-${random(8)}-->`;
+    if(kind===1)return `text-${random(8)}`;
+    const tag=['p','b','i','section'][random(4)];
+    const key=random(3)===0?'':` key="${random(8)}"`;
+    return `<${tag}${key} data-value="${random(99)}">${depth ? tree(depth-1) : random(99)}</${tag}>`;
+  }).join('');
+  for(let i=0;i<400;i++){
+    const html=`<div>${tree(1)}</div>`;
+    // Compare with parsed markup, since the HTML parser repairs invalid p nesting.
+    const expected=w.document.createElement('template');expected.innerHTML=html;
+    patch(w,html);assert.equal(w.document.body.innerHTML,expected.innerHTML,`seed iteration ${i}`);
+  }
+  w.close();
+});
