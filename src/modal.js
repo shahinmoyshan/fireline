@@ -28,12 +28,8 @@ export function showUnexpectedResponseModal(statusCode, html) {
     width: 100%; height: 100%; border: none;
     background: white; border-radius: 8px;`;
 
-  // Dev needs scripts + same origin so Vite's client and CSS load.
-  // Outside dev, keep the iframe fully sandboxed.
-  iframe.setAttribute(
-    "sandbox",
-    import.meta.env.DEV ? "allow-scripts allow-same-origin" : "",
-  );
+  // Sandbox the iframe to prevent it from executing scripts or accessing the parent page
+  iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
 
   iframe.srcdoc = html || "<i>No HTML provided</i>";
 
