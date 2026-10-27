@@ -1,5 +1,47 @@
 const assert = require('node:assert/strict');
 module.exports = async (page, base) => {
+  await page.goto(base);
+  await page.waitForFunction(() => window.Alpine?.fire);
+  await page.route('**/instant-progress', route => route.fulfill({json:{html:'<div>Instant</div>'}}));
+  await page.evaluate(async () => {
+    FireLine.settings.progressBar = true;
+    window.progressShown = false;
+    window.progressObserver = new MutationObserver(records => {
+      if (records.some(record => [...record.addedNodes].some(node => node.id === 'fireline-progress')))
+        window.progressShown = true;
+    });
+    progressObserver.observe(document.body, {childList:true});
+    await Alpine.fire.navigate('/instant-progress');
+  });
+  await page.waitForTimeout(250);
+  assert.equal(await page.evaluate(() => window.progressShown), false);
+  let release;
+  const gate = new Promise(resolve => release = resolve);
+  await page.route('**/delayed-progress', async route => {
+    await gate;
+    await route.fulfill({json:{html:'<div>Delayed</div>'}});
+  });
+  assert.equal(await page.evaluate(() => {
+    window.progressRequest = Alpine.fire.navigate('/delayed-progress');
+    return document.querySelector('#fireline-progress') !== null;
+  }), false);
+  await page.waitForFunction(() => document.querySelector('#fireline-progress')?.style.opacity === '1');
+  release();
+  await page.evaluate(() => progressRequest);
+  await page.waitForFunction(() => document.querySelector('#fireline-progress')?.style.opacity === '0');
+  await page.evaluate(() => progressObserver.disconnect());
+  console.log('PASS browser fast navigation skips progress; slow navigation shows and clears it');
+
+  await page.goto(base);
+  await page.waitForFunction(() => window.Alpine?.fire);
+  await page.evaluate(async () => {
+    await Alpine.fire.navigate('/scroll-a');
+    scrollTo(0, 700);
+    await Alpine.fire.navigate('/scroll-b');
+  });
+  assert.equal(await page.evaluate(() => scrollY), 0);
+  console.log('PASS browser new page navigation resets scroll to the top');
+
   await page.goto(base + '/esm');
   await page.waitForFunction(() => window.FireLine);
   await page.evaluate(() => {

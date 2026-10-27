@@ -73,6 +73,7 @@ const serve = http.createServer((req, res) => {
     console.log('PASS browser can disable fragment scripts');
     await page.evaluate(() => FireLine.modal.show(500, '<script>parent.modalExecuted=true<\/script><p>Error</p>'));
     assert.equal(await page.locator('#fireline-unexpected-modal iframe').getAttribute('sandbox'), '');
+    await page.waitForTimeout(50);
     assert.equal(await page.evaluate(() => window.modalExecuted), undefined);
     await page.evaluate(() => FireLine.modal.dismiss());
     console.log('PASS unexpected response iframe is sandboxed');

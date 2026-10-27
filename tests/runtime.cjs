@@ -10,6 +10,7 @@ async function setup(html = '<div id="app"><div>old</div></div>') {
   vc.on('error', (...e) => errors.push(e));
   const dom = new JSDOM(`<body>${html}</body>`, { runScripts: 'dangerously', url: 'http://localhost/start', pretendToBeVisual: true, virtualConsole: vc });
   const w = dom.window;
+  w.scrollTo = (x, y) => { w.scrollX = x; w.scrollY = y; };
   w.Headers = Headers; w.Response = Response; w.AbortController = AbortController;
   w.eval(bundle);
   w.document.addEventListener('alpine:init', () => w.Alpine.plugin(w.TestFire.plugin));

@@ -1,10 +1,30 @@
-let hideTimer, resetTimer, interval;
+let showTimer, hideTimer, resetTimer, interval;
 let value = 0;
 
 export function startProgress() {
+  clearTimeout(showTimer);
   clearTimeout(hideTimer);
   clearTimeout(resetTimer);
   clearInterval(interval);
+  const el = document.getElementById("fireline-progress");
+  if (!window.FireLine?.settings.progressBar) {
+    el?.remove();
+    return;
+  }
+  const configuredDelay = Number(window.FireLine.settings.progressDelay ?? 200);
+  const delay =
+    Number.isFinite(configuredDelay) &&
+    configuredDelay >= 0 &&
+    configuredDelay <= 2147483647
+      ? configuredDelay
+      : 200;
+  // Reuse a visible bar across consecutive requests without a hide/show flash.
+  if (delay === 0 || el?.style.opacity === "1") showProgress();
+  else showTimer = setTimeout(showProgress, delay);
+}
+
+function showProgress() {
+  showTimer = null;
   let el = document.getElementById("fireline-progress");
   if (!window.FireLine?.settings.progressBar) {
     el?.remove();
@@ -30,6 +50,7 @@ export function startProgress() {
 }
 
 export function stopProgress() {
+  clearTimeout(showTimer);
   clearInterval(interval);
   clearTimeout(hideTimer);
   clearTimeout(resetTimer);
@@ -39,6 +60,8 @@ export function stopProgress() {
     el.remove();
     return;
   }
+  // A fast request must not reveal an existing, hidden bar on completion.
+  if (el.style.opacity !== "1") return;
   el.style.width = "100%";
   hideTimer = setTimeout(() => {
     el.style.opacity = "0";

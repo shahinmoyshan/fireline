@@ -47,6 +47,7 @@ async function render(
       } catch {}
       const anchor = hash && document.getElementById(hash);
       if (anchor) anchor.scrollIntoView();
+      else window.scrollTo(0, 0);
     }
     emit("navigate", { url: location.href });
   }

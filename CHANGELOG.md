@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Delay progress display by 200 ms by default (`progressDelay`), cancel pending display for fast/failed/canceled requests, and preserve progress across overlapping work.
+- Reset scroll on new page navigation without a matching anchor while preserving reload and history restoration behavior.
+- Isolate unexpected-response previews with a fully sandboxed iframe and restore the page's original overflow style when closing the preview.
+- Align the reported runtime version with package version 2.1.1 and add timer-boundary and real-browser regressions.
+
 ## 2.1.0
 
 - Add declarative preloading, page polling, reactive partial loading, optional view transitions, a progress indicator, validation focus, scroll restoration and asset-version checks.

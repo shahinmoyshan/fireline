@@ -15,7 +15,7 @@ export default (Alpine) => {
   setAlpine(Alpine);
 
   const FireLine = Alpine.reactive({
-    version: "2.1.0",
+    version: "2.1.1",
     name: "fireline",
     events: {
       start: new Event("fireStart"),
@@ -43,6 +43,7 @@ export default (Alpine) => {
       preloadCacheSize: 50,
       viewTransitions: false,
       progressBar: false,
+      progressDelay: 200,
       progressColor: "#29d",
       assetVersion: null,
       focusOnError: false,

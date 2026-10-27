@@ -180,6 +180,7 @@ test('validation focus handles literal special names, bracket paths and disabled
 
 test('progress from a completed request never hides the following request', async t => {
   const {w,close}=await setup();t.after(close);w.FireLine.settings.progressBar=true;
+  w.FireLine.settings.progressDelay=0;
   w.fetch=async()=>json({message:'ok'});await w.TestFire.ajaxRequest('/first');
   await wait(200);const gate=deferred();w.fetch=()=>gate.promise;const pending=w.TestFire.ajaxRequest('/second');
   await wait(350);const bar=w.document.querySelector('#fireline-progress');assert.equal(bar.style.opacity,'1');assert.notEqual(bar.style.width,'0%');

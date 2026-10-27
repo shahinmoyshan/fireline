@@ -111,8 +111,8 @@ Use `x-partial.lazy="comments"` (alias `.intersect`) to load once when visible. 
 ### Navigation effects and deployment versions
 
 - Set `viewTransitions = true` to wrap page replacement in the browser's View Transitions API. Unsupported browsers patch normally. Styling transitions is your application's responsibility; FireLine does not supply a slide animation. Navigation waits for the DOM update, not the animation's end.
-- Set `progressBar = true` and optionally `progressColor = '#29d'` for a top-edge indicator covering foreground requests and response handling.
-- FireLine saves scroll coordinates in `history.state.scroll` while preserving other state fields, restores them on back/forward, and decodes hash IDs when jumping to a new page's anchor. Scroll-event history writes are coalesced; the latest 100 entry positions stay in memory for immediate traversal. `history.state.__fireline` is reserved for entry identity. It sets `history.scrollRestoration = 'manual'`; avoid installing a second scroll manager.
+- Set `progressBar = true` and optionally `progressColor = '#29d'` for a top-edge indicator covering foreground requests and response handling. It appears only after `progressDelay` milliseconds (default `200`), so fast requests and cached visits do not flash the bar. Completion, failure, or cancellation before the delay cancels display; overlapping requests keep it active until all finish. Set `progressDelay = 0` for immediate display.
+- FireLine saves scroll coordinates in `history.state.scroll` while preserving other state fields, restores them on back/forward, and decodes hash IDs when jumping to a new page's anchor. New page visits without a matching anchor scroll to the top; reloads retain their position. Scroll-event history writes are coalesced; the latest 100 entry positions stay in memory for immediate traversal. `history.state.__fireline` is reserved for entry identity. It sets `history.scrollRestoration = 'manual'`; avoid installing a second scroll manager.
 - Set `assetVersion` from the build identifier embedded in the initial HTML. When a successful render's `X-FireLine-Asset-Version` differs, navigation makes a full request to the destination; partials and non-redirected write renders reload the current document. A preload merely retains the version for checking on use. Keep the initial HTML version and server header consistent across deployments.
 - Set `focusOnError = true` to focus the first available invalid form control after Alpine updates. Literal names and PHP-style bracket names mapped from dotted error paths are supported; hidden and disabled controls are skipped.
 
@@ -245,7 +245,8 @@ Change individual fields or use `Object.assign(FireLine.settings, {...})` to ret
 | `executeScripts` | `true` | Execute scripts in trusted fragments |
 | `showUnexpectedModal` | `true` | Display unexpected responses in a sandboxed iframe |
 | `viewTransitions` | `false` | Use `document.startViewTransition()` on page replacement |
-| `progressBar` | `false` | Show built-in top-edge loading bar |
+| `progressBar` | `false` | Enable the built-in top-edge loading bar |
+| `progressDelay` | `200` | Milliseconds before showing progress; `0` shows immediately; invalid/out-of-range values use `200` |
 | `progressColor` | `'#29d'` | Color for the top-edge progress bar |
 | `assetVersion` | `null` | Hard-reload on mismatch with `X-FireLine-Asset-Version` header |
 | `focusOnError` | `false` | Focus an available invalid control after reactive updates |
