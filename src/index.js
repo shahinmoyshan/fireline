@@ -15,7 +15,7 @@ export default (Alpine) => {
   setAlpine(Alpine);
 
   const FireLine = Alpine.reactive({
-    version: "2.1.1",
+    version: "2.1.2",
     name: "fireline",
     events: {
       start: new Event("fireStart"),

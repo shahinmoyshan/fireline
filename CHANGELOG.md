@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.2
 
 - Delay progress display by 200 ms by default (`progressDelay`), cancel pending display for fast/failed/canceled requests, and preserve progress across overlapping work.
 - Reset scroll on new page navigation without a matching anchor while preserving reload and history restoration behavior.

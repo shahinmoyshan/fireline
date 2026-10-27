@@ -1,6 +1,6 @@
 {
     "name": "fireline",
-    "version": "2.1.1",
+    "version": "2.1.2",
     "description": "An Alpine.js plugin for dynamic client-side routing, form handling, server-side rendering, and global state management.",
     "keywords": [
         "Alpine JS",
