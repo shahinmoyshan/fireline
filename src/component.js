@@ -1,4 +1,5 @@
 import { replaceContents } from "./dom";
+import { invalidatePreloadCache } from "./fetch";
 import { httpUrl, triggerError } from "./helpers";
 
 const proxyMap = new WeakMap();
@@ -151,24 +152,28 @@ export function createReactiveComponent(initial = {}) {
         const csrfToken =
           settings.csrfToken ||
           document.querySelector('meta[name="csrf-token"]')?.content;
+        const headers = new Headers(settings.headers);
+        headers.set("Content-Type", "application/json");
+        headers.set("Accept", "application/json");
+        headers.set("X-Requested-With", "XMLHttpRequest");
+        headers.set("X-FireLine", "1");
+        headers.set("X-FireLine-Component", "1");
+        headers.delete("X-FireLine-Preload");
+        headers.delete("X-FireLine-Partial");
+        if (csrfToken) headers.set("X-CSRF-TOKEN", csrfToken);
         if (settings.timeout > 0) {
           timeout = setTimeout(
             () => controller.abort(),
             settings.timeout * 1000,
           );
         }
+        invalidatePreloadCache();
         const response = await fetch(endpoint.href, {
           method: "POST",
           signal: controller.signal,
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            "X-Requested-With": "XMLHttpRequest",
-            "X-FireLine": "1",
-            "X-FireLine-Component": "1",
-            ...(csrfToken ? { "X-CSRF-TOKEN": csrfToken } : {}),
-            ...settings.headers,
-          },
+          credentials: "same-origin",
+          mode: "same-origin",
+          headers,
           body: JSON.stringify({
             id: this.id,
             component: this.component,
@@ -229,6 +234,7 @@ export function createReactiveComponent(initial = {}) {
         return null;
       } finally {
         clearTimeout(timeout);
+        invalidatePreloadCache();
         this.loading = false;
         this.loadingTarget = null;
         controller = null;

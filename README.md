@@ -1,6 +1,6 @@
 # FireLine 2.1
 
-FireLine is an Alpine.js plugin for navigation and form submissions over server-rendered HTML. Your backend returns JSON envelopes; FireLine patches a page fragment while retaining matching Alpine components.
+FireLine is an Alpine.js plugin for navigation, forms, partials, and reactive PHP components over server-rendered HTML. Your backend returns JSON envelopes; FireLine patches matching DOM nodes while retaining their Alpine state.
 
 Requires Alpine **3.15+ (3.x)** and a modern browser with Fetch, AbortController, FormData and ES2020 support. FireLine does not bundle Alpine.
 
@@ -27,7 +27,7 @@ Alpine.start();
 Assigning `window.Alpine` is optional with the module build. For CDN use, load FireLine before Alpine:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/npm/fireline@2.1.0/dist/cdn.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/fireline@2.1.2/dist/cdn.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.0/dist/cdn.min.js"></script>
 ```
 
@@ -125,7 +125,7 @@ FireLine.settings.interceptForms = true;
 
 Add `native` to opt out. Links/forms with explicit FireLine directives are not submitted twice when global interception is enabled.
 
-Inside Alpine, use `$fire`; outside, use `Alpine.fire` or `FireLine.context`:
+Outside a reactive PHP component, use `$fire` inside Alpine, or `Alpine.fire` / `FireLine.context` from JavaScript. Inside a reactive PHP component, `$fire` refers to that component; use `FireLine.context` for page navigation:
 
 | API | Behavior |
 | --- | --- |
@@ -167,7 +167,7 @@ New foreground GET requests cancel the preceding foreground GET by default. Prel
 
 `FireLine.form()` is also available in JavaScript. Its result becomes reactive when placed in Alpine `x-data` (or wrapped with `Alpine.reactive`). Extra `initialData` fields are ordinary state: **requests serialize the actual form controls**, not the state object. Use named inputs and `x-model` when binding data.
 
-Forms send `FormData`, including files and the clicked submit button. Submitter `formaction` and `formmethod` overrides are honored. GET forms encode fields into the query string, replacing the action's existing query. Relative actions resolve against `document.baseURI`. `native`, external actions, non-self targets and dialog forms keep native behavior when submitted through event interception.
+Forms use the browser's `FormData` serialization, including the clicked submit button. Upload validation, storage, and cleanup belong to your application; FireLine provides no upload API. Submitter `formaction` and `formmethod` overrides are honored. GET forms encode fields into the query string, replacing the action's existing query. Relative actions resolve against `document.baseURI`. `native`, external actions, non-self targets and dialog forms keep native behavior when submitted through event interception.
 
 A `success` envelope resets native controls to their default values; Alpine's form-reset handling updates `x-model`. Validation and error envelopes retain entered values. A render response patches the page; GET form renders update history. A `navigate` response fetches the destination. Network failures emit `fireError` and clear processing; they do not invent a validation message.
 
@@ -185,6 +185,84 @@ A `success` envelope resets native controls to their default values; Alpine's fo
 ```
 
 An optional expression runs before submission. Success/error messages are written as **text**, including validation's top-level message. Use `x-form` for field errors.
+
+## Reactive PHP components
+
+Use the matching [PHP adapter](https://github.com/tinymvc/fireline-php#reactive-components) to declare public state and server actions. Mount a component in Blade:
+
+```blade
+@reactive(\App\Components\Counter::class, ['count' => 3])
+```
+
+The adapter generates the `x-data="reactive(...)"` root, its instance ID and checksum, and a stable `data-fire-content` host. Do not add another `x-data` to that wrapper. A component view can contain:
+
+```html
+<div>
+    <input fire:model="label">
+    <span x-text="$fire.count"></span>
+    <button type="button" fire:click="increment(2)">Add two</button>
+    <form fire:submit="saveLabel">
+        <button fire:loading.attr="disabled" fire:target="saveLabel">Save</button>
+        <span fire:loading fire:target="saveLabel">Saving…</span>
+    </form>
+</div>
+```
+
+These controls assume the PHP component declares `label`, `count`, `increment()` and `saveLabel()`. Use escaped Blade output for server-rendered values. Actions accept positional JavaScript expressions, such as `removeItem(17)`; Alpine expressions can also call `$fire.removeItem(17)` directly. `fire:submit` always prevents native submission. Do not combine it with `x-form` or `x-submit` on the same form.
+
+### Component bindings and actions
+
+| Binding | Behavior |
+| --- | --- |
+| `fire:model="label"` | Update local state immediately; synchronize after 250 ms of inactivity |
+| `fire:model.debounce.500ms="label"` | Choose the synchronization delay; state still updates immediately |
+| `fire:model.lazy="label"` / `.change` | Read the control on `change` and queue an immediate sync |
+| `fire:model.number="count"` / `.trim` | Convert numeric input / trim strings before updating state |
+| `fire:click="increment"` | Call a public server action; `.prevent` and `.stop` control the DOM event |
+| `fire:submit="saveLabel"` | Call an action on form submission; `.stop` also stops propagation |
+| `fire:loading` / `.remove` | Show while busy / hide while busy |
+| `fire:loading.attr="disabled"` | Apply an attribute while busy; `.remove` removes it temporarily |
+| `fire:loading.class="opacity-50"` | Apply classes while busy; `.remove` removes existing classes temporarily |
+| `fire:loading.delay.300ms` | Delay the loading indicator; `.delay` alone uses 200 ms |
+| `fire:target="saveLabel"` | Restrict a loading indicator to one action name |
+| `fire:poll.5s="refresh"` | Call an action after each interval; no expression refreshes the component |
+| `fire:key="item-17"` | Match a DOM node by a stable literal key during reconciliation |
+
+Checkboxes support boolean state or arrays of selected values; radio buttons and multiple selects are also supported. `fire:model` binds a **top-level public property name**. For nested data, use Alpine bindings to `state`, such as `x-model="state.filters.query"`; changes synchronize the containing public property. Initialize the PHP array with the expected keys, for example `public array $filters = ['query' => ''];`. Initialize public properties before rendering them. There is no `.defer` modifier.
+
+Inside the component, `$fire` and `$component` expose its state and actions:
+
+```js
+$fire.count = 5;
+$fire.set('label', 'Updated');
+await $fire.increment(2);
+await $fire.call('saveLabel');
+await $fire.send(); // Refresh without calling an action.
+```
+
+`state`, `errors`, `loading`, and `loadingTarget` are available in the root Alpine scope. PHP public properties live under `state`; the proxies also expose them directly. Choose property names that do not hide proxy methods such as `call`, `get`, `set`, or `send`.
+
+Requests for one component run in order, using the preceding response's state. Actions include pending edits and clear the debounce timer. Edits made while a request is running remain in local state and synchronize afterward. Completed requests reconcile only the component's contents. Removal stops timers/listeners, aborts transport, and prevents late responses from modifying the DOM. Aborting a request cannot undo work already executed by PHP.
+
+Polling defaults to 5 seconds and pauses while the document is hidden, the browser is offline, or that component is loading. It resumes after request failures. Component requests invalidate page preloads, use local loading indicators, and do not emit global `fireStart` / `fireEnd` events or show the page progress bar. Request failures emit `fireError` and resolve to `null`; successful calls resolve to the component response object.
+
+### Validation, events, and transport
+
+Component validation returns HTTP 200 with updated HTML and an `errors` object; it does not use ordinary form HTTP 422 handling. Render messages with PHP's component error bag or Alpine's `errors` state. Validation failures in update hooks stop the action while preserving other submitted edits.
+
+PHP `dispatch('saved', 17)` emits a browser event on `window` whose `event.detail.params` is `[17]`. PHP `$listeners` maps browser event names to public action names. Dispatch from JavaScript with `window.dispatchEvent(new CustomEvent('refresh-counter', { detail: { params: [17] } }))`. Listeners are registered when the component mounts and removed with it.
+
+The default endpoint is `POST /_fire/component`. `componentEndpoint` can select another same-origin route if the backend registers it. Requests contain `id`, `component`, `checksum`, the previous server `state`, a `method` (`__sync` for refresh), positional `params`, and changed top-level `updates`. Responses contain `id`, `state`, `html`, `events`, `errors`, `redirect`, and `navigate`. A redirect or navigation takes precedence over patching.
+
+Component requests use `timeout`, `headers`, `csrfToken`, and `executeScripts`. JSON content type and FireLine identification headers are enforced. For CSRF, configure `csrfToken` or provide a `meta[name="csrf-token"]` element; component requests do not serialize hidden form fields. Page/form response callbacks and the unexpected-response modal do not run for component requests.
+
+### File uploads and current scope
+
+**File uploads are application-owned.** `fire:model` ignores `input[type="file"]` entirely: it does not read, clear, watch, or upload the selection. Do not put `File`, `Blob`, `FileList`, or `FormData` objects in component state or action arguments. Use a native form marked `native`, or your own multipart request and upload endpoint. After validating and storing a file, you may put its application-defined identifier in component state.
+
+FireLine provides no temporary-upload store, upload progress API, chunking, or storage cleanup. Ordinary `x-form` submissions retain standard browser `FormData` behavior, but all file processing remains the developer's responsibility.
+
+This release synchronizes JSON-compatible state; it does not serialize PHP models, services, or uploaded-file objects. Public state is browser-editable and actions need server-side validation and authorization. Nested reactive PHP components can remount when a parent returns a new wrapper; stable `fire:key` values preserve DOM nodes, not independent server component instances. Use sibling component mounts when their state must survive independently.
 
 ## JSON response protocol
 
@@ -233,6 +311,7 @@ Change individual fields or use `Object.assign(FireLine.settings, {...})` to ret
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| `componentEndpoint` | `'/_fire/component'` | Same-origin reactive component endpoint |
 | `targetEl` | `'#app > div'` | Selector for the element to reconcile |
 | `timeout` | `30` | Seconds through response-body reading, and per external script load; `0` disables timeout |
 | `interceptLinks` | `false` | Automatically handle eligible anchors |
@@ -255,7 +334,7 @@ Change individual fields or use `Object.assign(FireLine.settings, {...})` to ret
 | `onServerError` | `null` | `(response, envelope) => {}` for HTTP 5xx |
 | `onUnexpectedResponse` | `null` | `(status, body) => {}` instead of the fallback modal |
 
-Except during preloading, status callbacks run for both JSON and non-JSON errors and may be asynchronous. The response body has already been consumed; inspect `envelope.raw` or `envelope.rawHtml`. For unexpected responses, a matching status callback takes precedence over the generic callback/modal. Recognized JSON errors are still returned to form handling after the callback.
+For navigation, forms, and partials (except preloading), status callbacks run for both JSON and non-JSON errors and may be asynchronous. The response body has already been consumed; inspect `envelope.raw` or `envelope.rawHtml`. For unexpected responses, a matching status callback takes precedence over the generic callback/modal. Recognized JSON errors are still returned to form handling after the callback.
 
 Disable the debug modal in production if desired. `FireLine.modal.show(status, body)` and `.dismiss()` control it manually. Response scripts cannot run in its sandbox.
 
@@ -307,7 +386,7 @@ npm pack --dry-run
 
 For the real PHP adapter test, install Composer dependencies in the sibling `fireline-php` checkout, then run `npm run test:integration`. To use an installed Chrome instead of Playwright Chromium: `FIRELINE_BROWSER_CHANNEL=chrome npm run test:integration`.
 
-The suite includes randomized keyed and mixed-tree reconciliation, real Alpine lifecycle tests, cache/request races, partial cleanup, transition failures, form validation, progress timing, browser scroll/asset-version checks and a keyed-reversal benchmark. To run another installed Playwright engine, set `FIRELINE_BROWSER=firefox` or `FIRELINE_BROWSER=webkit` (omit `FIRELINE_BROWSER_CHANNEL`). Browser timings depend on hardware and DOM complexity; no test suite establishes correctness for every possible DOM or third-party plugin. `prepack` rebuilds the CDN and ES module artifacts. Publishing is a separate maintainer action.
+The suite includes component mounting, two-way binding, ordered actions, loading indicators and events, plus randomized keyed and mixed-tree reconciliation, real Alpine lifecycle tests, cache/request races, partial cleanup, transition failures, form validation, progress timing, browser scroll/asset-version checks and a keyed-reversal benchmark. To run another installed Playwright engine, set `FIRELINE_BROWSER=firefox` or `FIRELINE_BROWSER=webkit` (omit `FIRELINE_BROWSER_CHANNEL`). Browser timings depend on hardware and DOM complexity; no test suite establishes correctness for every possible DOM or third-party plugin. `prepack` rebuilds the CDN and ES module artifacts. Publishing is a separate maintainer action.
 
 ### Browser-runtime diagnostic
 

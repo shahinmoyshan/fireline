@@ -79,6 +79,8 @@ function runAction(component, expression, evaluate, event) {
 }
 
 function handleModel(el, expression, modifiers, getComponent, effect, cleanup) {
+  if (el.type === "file") return;
+
   const property = expression.trim();
   const isCheckbox = el.type === "checkbox";
   const isRadio = el.type === "radio";

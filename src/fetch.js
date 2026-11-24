@@ -8,10 +8,10 @@ let activeRequests = 0;
 let cacheGeneration = 0;
 const preloadCache = new Map();
 const pendingPreloads = new Map();
-const invalidateCache = () => {
+export function invalidatePreloadCache() {
   cacheGeneration++;
   preloadCache.clear();
-};
+}
 
 // The consumer is part of the request lifecycle, including for cache hits.
 export async function ajaxRequest(
@@ -54,7 +54,7 @@ export async function ajaxRequest(
       currentGetRequestController = controller;
     }
     write = !["GET", "HEAD"].includes(method);
-    if (write) invalidateCache();
+    if (write) invalidatePreloadCache();
     const generation = cacheGeneration;
     const headers = new Headers(settings.headers);
     if (!headers.has("Accept")) headers.set("Accept", "application/json");
@@ -145,7 +145,7 @@ export async function ajaxRequest(
       envelope.assetVersion != null &&
       String(settings.assetVersion) !== envelope.assetVersion
     ) {
-      invalidateCache();
+      invalidatePreloadCache();
       if (partial || (!isGet && !envelope.redirected)) location.reload();
       else location.assign(envelope.redirected ? envelope.url : url.href);
       return null;
@@ -204,7 +204,7 @@ export async function ajaxRequest(
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);
     if (pendingKey) pendingPreloads.delete(pendingKey);
-    if (write) invalidateCache();
+    if (write) invalidatePreloadCache();
     if (currentGetRequestController === controller)
       currentGetRequestController = null;
     if (started) {
