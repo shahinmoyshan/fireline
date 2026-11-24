@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.3
+
+- Added Two Data Binding & Server Side Reactive Component
+
 ## 2.1.2
 
 - Delay progress display by 200 ms by default (`progressDelay`), cancel pending display for fast/failed/canceled requests, and preserve progress across overlapping work.

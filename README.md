@@ -27,7 +27,7 @@ Alpine.start();
 Assigning `window.Alpine` is optional with the module build. For CDN use, load FireLine before Alpine:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/npm/fireline@2.1.2/dist/cdn.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/fireline@2.1.3/dist/cdn.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.15.0/dist/cdn.min.js"></script>
 ```
 
