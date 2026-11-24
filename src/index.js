@@ -3,6 +3,8 @@ import { safeReplaceHtml, canNavigate, canSubmit } from "./helpers";
 import { setAlpine } from "./dom";
 import { createForm } from "./form";
 import { createPartial } from "./partial";
+import { createReactiveComponent, getComponentProxy } from "./component";
+import { registerComponentDirectives } from "./directives";
 import { ajaxRequest } from "./fetch";
 import { trackScroll, scrollPosition } from "./history";
 import {
@@ -47,6 +49,7 @@ export default (Alpine) => {
       progressColor: "#29d",
       assetVersion: null,
       focusOnError: false,
+      componentEndpoint: "/_fire/component",
     },
     context: {
       current: window.location.href,
@@ -63,13 +66,32 @@ export default (Alpine) => {
   window.FireLine = FireLine;
   window.FireLine.form = createForm;
   window.FireLine.partial = createPartial;
+  window.FireLine.component = createReactiveComponent;
   window.FireLine.modal = {
     show: showUnexpectedResponseModal,
     dismiss: dismissUnexpectedResponseModal,
   };
 
+  Alpine.data("reactive", createReactiveComponent);
+
+  registerComponentDirectives(Alpine);
+
   Alpine.fire = FireLine.context;
-  Alpine.magic("fire", () => FireLine.context);
+  const resolveProxy = (el) => {
+    const root = el.closest?.("[data-fire-id]");
+    if (root) {
+      const data = Alpine.$data(root);
+      if (data) return getComponentProxy(data);
+    }
+    return null;
+  };
+
+  Alpine.magic("fire", (el) => {
+    return resolveProxy(el) || FireLine.context;
+  });
+  Alpine.magic("component", (el) => {
+    return resolveProxy(el) || Alpine.$data(el);
+  });
   Alpine.magic("form", () => createForm);
   Alpine.magic("partial", () => createPartial);
 

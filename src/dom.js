@@ -9,8 +9,14 @@ export function alpine() {
 }
 
 const isElement = (node) => node?.nodeType === 1;
-const keyOf = (node) => (isElement(node) ? node.getAttribute("key") : null);
-const isDirective = (name) => name !== "x-cloak" && /^(x-|:|@)/.test(name);
+const keyOf = (node) =>
+  isElement(node)
+    ? (node.getAttribute("key") ??
+      node.getAttribute("fire:key") ??
+      node.getAttribute("x-fire:key"))
+    : null;
+const isDirective = (name) =>
+  name !== "x-cloak" && /^(x-|:|@|fire:)/.test(name);
 const hasDirective = (el, name) => {
   for (const attr of el.attributes)
     if (attr.name === name || attr.name.startsWith(`${name}.`)) return true;
@@ -73,7 +79,10 @@ function syncAttributes(oldNode, newNode) {
     for (const attr of oldNode.attributes)
       if (!isDirective(attr.name)) managed.add(attr.name);
   }
-  const hasShow = hasDirective(newNode, "x-show");
+  const hasShow =
+    hasDirective(newNode, "x-show") ||
+    hasDirective(newNode, "fire:loading") ||
+    hasDirective(newNode, "x-fire:loading");
   const display = hasShow ? oldNode.style.display : null;
   const displayPriority = hasShow
     ? oldNode.style.getPropertyPriority("display")
@@ -112,7 +121,12 @@ const bound = (el, name) =>
 
 function syncControl(oldNode, newNode) {
   if (!["INPUT", "TEXTAREA", "SELECT"].includes(oldNode.tagName)) return;
-  if (hasDirective(oldNode, "x-model")) return;
+  if (
+    hasDirective(oldNode, "x-model") ||
+    hasDirective(oldNode, "fire:model") ||
+    hasDirective(oldNode, "x-fire:model")
+  )
+    return;
   const valueBound = bound(oldNode, "value");
   if (oldNode.tagName === "INPUT") {
     if (
@@ -234,6 +248,7 @@ function patch(parent, oldNode, newNode) {
   syncControl(oldNode, newNode);
   // Option/attribute changes can alter a modeled control without firing its effect.
   oldNode._x_forceModelUpdate?.(oldNode._x_model.get());
+  oldNode._fireModelUpdate?.();
   return oldNode;
 }
 
